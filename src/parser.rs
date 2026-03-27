@@ -11,8 +11,10 @@ pub fn get_page_size(file: &mut File) -> Result<u16> {
     Ok(u16::from_be_bytes([header_bytes[16], header_bytes[17]]))
 }
 
-pub fn get_page_bytes(file: &mut File, page_size: u16) -> Result<Vec<u8>> {
+pub fn get_page_bytes(file: &mut File, page_size: u16, page: u32) -> Result<Vec<u8>> {
     let mut page_bytes = vec![0; page_size as usize];
+    let offset = u64::from(page - 1) * u64::from(page_size);
+    file.seek(SeekFrom::Start(offset))?;
     file.read_exact(&mut page_bytes)?;
     file.seek(SeekFrom::Start(0))?;
     Ok(page_bytes)
@@ -26,7 +28,12 @@ pub fn get_table_count(page_bytes: &[u8], is_root: bool) -> u16 {
     }
 }
 
-pub fn parse_table_name(raw_bytes: &[u8], mut offset: usize) -> String {
+pub struct TableInfo {
+    pub name: String,
+    pub root_page: u32,
+}
+
+pub fn parse_table_info(raw_bytes: &[u8], mut offset: usize) -> TableInfo {
     // skip record length and rowid
     (_, offset) = handle_varint(raw_bytes, offset);
     (_, offset) = handle_varint(raw_bytes, offset);
@@ -34,14 +41,23 @@ pub fn parse_table_name(raw_bytes: &[u8], mut offset: usize) -> String {
     let header_offset = offset;
     let (header_length, offset) = handle_varint(raw_bytes, offset);
     let (type_length, offset) = handle_varint(raw_bytes, offset);
-    let (name_length, _) = handle_varint(raw_bytes, offset);
+    let (name_length, offset) = handle_varint(raw_bytes, offset);
+    let (tbl_name_length, offset) = handle_varint(raw_bytes, offset);
+    let (root_page_length, _) = handle_varint(raw_bytes, offset);
 
     let type_length = (type_length - 13) / 2;
     let name_length = (name_length - 13) / 2;
+    let tbl_name_length = (tbl_name_length - 13) / 2;
 
-    let name_start_offset = header_offset + header_length + type_length;
-    let name_end_offset = name_start_offset + name_length;
-    String::from_utf8_lossy(&raw_bytes[name_start_offset..name_end_offset]).to_string()
+    let name_start_offset = header_offset + header_length + type_length + name_length;
+    let name_end_offset = name_start_offset + tbl_name_length;
+    let name = String::from_utf8_lossy(&raw_bytes[name_start_offset..name_end_offset]).to_string();
+    let mut root_page = 0;
+    for i in 0..root_page_length {
+        let byte = raw_bytes[name_end_offset + i];
+        root_page = (root_page << 8) | u32::from(byte);
+    }
+    TableInfo { name, root_page }
 }
 
 fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
