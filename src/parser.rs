@@ -1,36 +1,3 @@
-use anyhow::{Result, bail};
-use std::{
-    fs::File,
-    io::{Read as _, Seek, SeekFrom},
-};
-
-pub fn get_db_info(file: &mut File) -> Result<(u16, u16, Vec<u8>)> {
-    let page_size = get_page_size(file)?;
-    let page_bytes = get_page_bytes(file, page_size, 1)?;
-    let num_tables = get_cell_count(&page_bytes, true);
-    Ok((page_size, num_tables, page_bytes))
-}
-
-fn get_page_size(file: &mut File) -> Result<u16> {
-    let mut header_bytes = [0; 100];
-    file.read_exact(&mut header_bytes)?;
-    file.seek(SeekFrom::Start(0))?;
-    Ok(u16::from_be_bytes([header_bytes[16], header_bytes[17]]))
-}
-
-pub fn get_page_bytes(file: &mut File, page_size: u16, page: u32) -> Result<Vec<u8>> {
-    if page == 0 {
-        bail!("SQLite page numbers are 1-based");
-    }
-
-    let mut page_bytes = vec![0; page_size as usize];
-    let offset = u64::from(page - 1) * u64::from(page_size);
-    file.seek(SeekFrom::Start(offset))?;
-    file.read_exact(&mut page_bytes)?;
-    file.seek(SeekFrom::Start(0))?;
-    Ok(page_bytes)
-}
-
 pub fn get_cell_count(page_bytes: &[u8], is_root: bool) -> u16 {
     if is_root {
         u16::from_be_bytes([page_bytes[103], page_bytes[104]])
@@ -39,12 +6,25 @@ pub fn get_cell_count(page_bytes: &[u8], is_root: bool) -> u16 {
     }
 }
 
-pub struct TableInfo {
+pub struct SchemaEntry {
     pub tbl_name: String,
     pub root_page: u32,
 }
 
-pub fn parse_table_info(raw_bytes: &[u8], mut offset: usize) -> TableInfo {
+pub fn parse_schema_entries(raw_bytes: &[u8], offset: usize, num_entries: u16) -> Vec<SchemaEntry> {
+    let mut entries = Vec::new();
+    for i in 0..num_entries {
+        let cell_offset = u16::from_be_bytes([
+            raw_bytes[offset + (i as usize) * 2],
+            raw_bytes[offset + (i as usize) * 2 + 1],
+        ]) as usize;
+        let table_info = parse_schema_entry(raw_bytes, cell_offset);
+        entries.push(table_info);
+    }
+    entries
+}
+
+pub fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
     // skip record length and rowid
     (_, offset) = handle_varint(raw_bytes, offset);
     (_, offset) = handle_varint(raw_bytes, offset);
@@ -69,7 +49,7 @@ pub fn parse_table_info(raw_bytes: &[u8], mut offset: usize) -> TableInfo {
         let byte = raw_bytes[name_end_offset + i];
         root_page = (root_page << 8) | u32::from(byte);
     }
-    TableInfo {
+    SchemaEntry {
         tbl_name,
         root_page,
     }

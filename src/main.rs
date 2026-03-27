@@ -1,5 +1,6 @@
 use anyhow::Result;
 mod command;
+mod pager;
 mod parser;
 
 fn main() -> Result<()> {
