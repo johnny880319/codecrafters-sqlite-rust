@@ -24,7 +24,7 @@ pub fn parse_schema_entries(raw_bytes: &[u8], offset: usize, num_entries: u16) -
     entries
 }
 
-pub fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
+fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
     // skip record length and rowid
     (_, offset) = handle_varint(raw_bytes, offset);
     (_, offset) = handle_varint(raw_bytes, offset);

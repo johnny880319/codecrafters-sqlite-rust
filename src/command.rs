@@ -19,25 +19,25 @@ pub fn match_command(args: &[String]) -> Result<()> {
 
 fn cmd_dbinfo(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let (page_size, num_tables, _) = get_db_info(&mut file)?;
+    let (page_size, cell_count, _) = get_db_info(&mut file)?;
 
     println!("database page size: {page_size}");
-    println!("number of tables: {num_tables}");
+    println!("number of tables: {cell_count}");
 
     Ok(())
 }
 
 fn cmd_tables(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let (_, num_tables, page_bytes) = get_db_info(&mut file)?;
+    let (_, cell_count, page_bytes) = get_db_info(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
-    let schema_entries = parser::parse_schema_entries(&page_bytes, cell_array_offset, num_tables);
+    let schema_entries = parser::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
 
     let mut table_name_list = schema_entries
         .into_iter()
-        .filter(|entry| entry.tbl_name != "sqlite_sequence")
+        .filter(|entry| !entry.tbl_name.starts_with("sqlite_"))
         .map(|entry| entry.tbl_name)
         .collect::<Vec<_>>();
 
@@ -56,11 +56,11 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     let target_table_name = args[2].split_whitespace().nth(3).unwrap();
 
     let mut file = File::open(&args[1])?;
-    let (page_size, num_tables, page_bytes) = get_db_info(&mut file)?;
+    let (page_size, cell_count, page_bytes) = get_db_info(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
-    let schema_entries = parser::parse_schema_entries(&page_bytes, cell_array_offset, num_tables);
+    let schema_entries = parser::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
 
     for entry in schema_entries {
         if entry.tbl_name == target_table_name {
@@ -76,6 +76,6 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 fn get_db_info(file: &mut File) -> Result<(u16, u16, Vec<u8>)> {
     let page_size = pager::get_page_size(file)?;
     let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
-    let num_tables = parser::get_cell_count(&page_bytes, true);
-    Ok((page_size, num_tables, page_bytes))
+    let cell_count = parser::get_cell_count(&page_bytes, true);
+    Ok((page_size, cell_count, page_bytes))
 }
