@@ -42,7 +42,7 @@ fn cmd_tables(args: &[String]) -> Result<()> {
     let (_, offset) = parser::parse_header(&raw_bytes);
     let page = parser::parse_page(&raw_bytes, offset);
 
-    let mut cell_array_offset = if raw_bytes[100] == 0x0d { 108 } else { 112 };
+    let cell_array_offset = if raw_bytes[100] == 0x0d { 108 } else { 112 };
 
     let mut table_name_list = Vec::new();
     eprint!("{cell_array_offset}");
@@ -51,7 +51,6 @@ fn cmd_tables(args: &[String]) -> Result<()> {
             raw_bytes[cell_array_offset + (i as usize) * 2],
             raw_bytes[cell_array_offset + (i as usize) * 2 + 1],
         ]) as usize;
-        cell_array_offset += 2;
         let table_name = parser::parse_table_name(&raw_bytes, cell_offset);
 
         if !table_name.starts_with("sqlite_") {
