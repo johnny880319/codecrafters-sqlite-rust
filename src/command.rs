@@ -19,9 +19,7 @@ pub fn match_command(args: &[String]) -> Result<()> {
 
 fn cmd_dbinfo(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let page_size = parser::get_page_size(&mut file)?;
-    let page_bytes = parser::get_page_bytes(&mut file, page_size, 1)?;
-    let num_tables = parser::get_table_count(&page_bytes, true);
+    let (page_size, num_tables, _) = parser::get_db_info(&mut file)?;
 
     println!("database page size: {page_size}");
     println!("number of tables: {num_tables}");
@@ -31,9 +29,7 @@ fn cmd_dbinfo(args: &[String]) -> Result<()> {
 
 fn cmd_tables(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let page_size = parser::get_page_size(&mut file)?;
-    let page_bytes = parser::get_page_bytes(&mut file, page_size, 1)?;
-    let num_tables = parser::get_table_count(&page_bytes, true);
+    let (_, num_tables, page_bytes) = parser::get_db_info(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
@@ -45,8 +41,8 @@ fn cmd_tables(args: &[String]) -> Result<()> {
         ]) as usize;
         let table_info = parser::parse_table_info(&page_bytes, cell_offset);
 
-        if !table_info.name.starts_with("sqlite_") {
-            table_name_list.push(table_info.name);
+        if !table_info.tbl_name.starts_with("sqlite_") {
+            table_name_list.push(table_info.tbl_name);
         }
     }
     table_name_list.sort();
@@ -64,9 +60,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     let target_table_name = args[2].split_whitespace().nth(3).unwrap();
 
     let mut file = File::open(&args[1])?;
-    let page_size = parser::get_page_size(&mut file)?;
-    let page_bytes = parser::get_page_bytes(&mut file, page_size, 1)?;
-    let num_tables = parser::get_table_count(&page_bytes, true);
+    let (page_size, num_tables, page_bytes) = parser::get_db_info(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
@@ -77,9 +71,9 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
         ]) as usize;
         let table_info = parser::parse_table_info(&page_bytes, cell_offset);
 
-        if table_info.name == target_table_name {
+        if table_info.tbl_name == target_table_name {
             let page_bytes = parser::get_page_bytes(&mut file, page_size, table_info.root_page)?;
-            let num_rows = parser::get_table_count(&page_bytes, false);
+            let num_rows = parser::get_cell_count(&page_bytes, false);
             println!("{num_rows}");
             return Ok(());
         }
