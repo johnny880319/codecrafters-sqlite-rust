@@ -20,7 +20,8 @@ pub fn parse_table_name(raw_bytes: &[u8], offset: usize) -> String {
     let header_length = raw_bytes[offset + 2] as usize;
     let type_length = (raw_bytes[offset + 3] as usize - 13) / 2;
     let name_length = (raw_bytes[offset + 4] as usize - 13) / 2;
-    print!("{:?}", &raw_bytes[offset + 2..offset + 5]);
+    println!("{offset}");
+    println!("{:?}", &raw_bytes[offset + 2..offset + 5]);
     let name_start_offset = offset + 2 + header_length + type_length;
     let name_end_offset = name_start_offset + name_length;
     String::from_utf8_lossy(&raw_bytes[name_start_offset..name_end_offset]).to_string()
