@@ -20,7 +20,7 @@ pub fn match_command(args: &[String]) -> Result<()> {
 fn cmd_dbinfo(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
     let page_size = parser::get_page_size(&mut file)?;
-    let page_bytes = parser::get_page_bytes(&mut file, page_size, 0)?;
+    let page_bytes = parser::get_page_bytes(&mut file, page_size, 1)?;
     let num_tables = parser::get_table_count(&page_bytes, true);
 
     println!("database page size: {page_size}");
@@ -32,7 +32,7 @@ fn cmd_dbinfo(args: &[String]) -> Result<()> {
 fn cmd_tables(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
     let page_size = parser::get_page_size(&mut file)?;
-    let page_bytes = parser::get_page_bytes(&mut file, page_size, 0)?;
+    let page_bytes = parser::get_page_bytes(&mut file, page_size, 1)?;
     let num_tables = parser::get_table_count(&page_bytes, true);
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
@@ -65,7 +65,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 
     let mut file = File::open(&args[1])?;
     let page_size = parser::get_page_size(&mut file)?;
-    let page_bytes = parser::get_page_bytes(&mut file, page_size, 0)?;
+    let page_bytes = parser::get_page_bytes(&mut file, page_size, 1)?;
     let num_tables = parser::get_table_count(&page_bytes, true);
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
