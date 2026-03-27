@@ -19,7 +19,7 @@ pub fn match_command(args: &[String]) -> Result<()> {
 
 fn cmd_dbinfo(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let mut raw_bytes = [0; 4096];
+    let mut raw_bytes = [0; 200];
     file.read_exact(&mut raw_bytes)?;
 
     let (header, offset) = parser::parse_header(&raw_bytes);
