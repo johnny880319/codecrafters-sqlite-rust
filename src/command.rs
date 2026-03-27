@@ -1,6 +1,6 @@
 use crate::parser;
 use anyhow::{Result, bail};
-use std::{fs::File, io::Read as _};
+use std::fs::File;
 
 pub fn match_command(args: &[String]) -> Result<()> {
     match args.len() {
@@ -19,39 +19,32 @@ pub fn match_command(args: &[String]) -> Result<()> {
 
 fn cmd_dbinfo(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let mut raw_bytes = [0; 200];
-    file.read_exact(&mut raw_bytes)?;
-
-    let (header, offset) = parser::parse_header(&raw_bytes);
-    let page = parser::parse_page(&raw_bytes, offset);
-
-    println!("database page size: {}", header.page_size);
-    println!("number of tables: {}", page.num_cells);
-
-    let page_size = u16::from_be_bytes([raw_bytes[16], raw_bytes[17]]);
+    let page_size = parser::get_page_size(&mut file)?;
+    let page_bytes = parser::get_page_bytes(&mut file, page_size)?;
+    let num_tables = parser::get_table_count(&page_bytes, true);
 
     println!("database page size: {page_size}");
+    println!("number of tables: {num_tables}");
+
     Ok(())
 }
 
 fn cmd_tables(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let mut raw_bytes = [0; 4096];
-    file.read_exact(&mut raw_bytes)?;
+    let page_size = parser::get_page_size(&mut file)?;
+    let page_bytes = parser::get_page_bytes(&mut file, page_size)?;
+    let num_tables = parser::get_table_count(&page_bytes, true);
 
-    let (_, offset) = parser::parse_header(&raw_bytes);
-    let page = parser::parse_page(&raw_bytes, offset);
-
-    let cell_array_offset = if raw_bytes[100] == 0x0d { 108 } else { 112 };
+    let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
     let mut table_name_list = Vec::new();
     eprint!("{cell_array_offset}");
-    for i in 0..page.num_cells {
+    for i in 0..num_tables {
         let cell_offset = u16::from_be_bytes([
-            raw_bytes[cell_array_offset + (i as usize) * 2],
-            raw_bytes[cell_array_offset + (i as usize) * 2 + 1],
+            page_bytes[cell_array_offset + (i as usize) * 2],
+            page_bytes[cell_array_offset + (i as usize) * 2 + 1],
         ]) as usize;
-        let table_name = parser::parse_table_name(&raw_bytes, cell_offset);
+        let table_name = parser::parse_table_name(&page_bytes, cell_offset);
 
         if !table_name.starts_with("sqlite_") {
             table_name_list.push(table_name);
