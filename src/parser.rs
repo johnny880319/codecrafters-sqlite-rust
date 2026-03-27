@@ -26,11 +26,33 @@ pub fn get_table_count(page_bytes: &[u8], is_root: bool) -> u16 {
     }
 }
 
-pub fn parse_table_name(raw_bytes: &[u8], offset: usize) -> String {
-    let header_length = raw_bytes[offset + 2] as usize;
-    let type_length = (raw_bytes[offset + 3] as usize - 13) / 2;
-    let name_length = (raw_bytes[offset + 4] as usize - 13) / 2;
-    let name_start_offset = offset + 2 + header_length + type_length;
+pub fn parse_table_name(raw_bytes: &[u8], mut offset: usize) -> String {
+    // skip record length and rowid
+    (_, offset) = handle_varint(raw_bytes, offset);
+    (_, offset) = handle_varint(raw_bytes, offset);
+
+    let header_offset = offset;
+    let (header_length, offset) = handle_varint(raw_bytes, offset);
+    let (type_length, offset) = handle_varint(raw_bytes, offset);
+    let (name_length, _) = handle_varint(raw_bytes, offset);
+
+    let type_length = (type_length - 13) / 2;
+    let name_length = (name_length - 13) / 2;
+
+    let name_start_offset = header_offset + header_length + type_length;
     let name_end_offset = name_start_offset + name_length;
     String::from_utf8_lossy(&raw_bytes[name_start_offset..name_end_offset]).to_string()
+}
+
+fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
+    let mut value = 0;
+    loop {
+        let byte = raw_bytes[offset];
+        value = (value << 7) | (usize::from(byte) & 0x7F);
+        offset += 1;
+        if byte & 0x80 == 0 {
+            break;
+        }
+    }
+    (value, offset)
 }
