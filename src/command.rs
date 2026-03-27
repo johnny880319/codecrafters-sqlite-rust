@@ -45,6 +45,7 @@ fn cmd_tables(args: &[String]) -> Result<()> {
     let mut cell_array_offset = if raw_bytes[100] == 0x0d { 108 } else { 112 };
 
     let mut table_name_list = Vec::new();
+    eprint!("{}", page.num_cells);
     for i in 0..page.num_cells {
         let cell_offset = u16::from_be_bytes([
             raw_bytes[cell_array_offset + (i as usize) * 2],
