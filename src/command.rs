@@ -42,7 +42,7 @@ fn cmd_tables(args: &[String]) -> Result<()> {
     let (_, offset) = parser::parse_header(&raw_bytes);
     let page = parser::parse_page(&raw_bytes, offset);
 
-    let mut cell_array_offset = if raw_bytes[100] == 0x0d { 108 } else { 112 };
+    let mut cell_array_offset = if raw_bytes[100] == 0x0D { 108 } else { 112 };
 
     let mut table_name_list = Vec::new();
     eprint!("{}", page.num_cells);
