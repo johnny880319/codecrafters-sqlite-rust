@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
-use std::fs::File;
-use std::io::prelude::*;
+use std::{fs::File, io::Read as _};
+mod parser;
 
 fn main() -> Result<()> {
     // Parse arguments
@@ -16,12 +16,16 @@ fn main() -> Result<()> {
     match command.as_str() {
         ".dbinfo" => {
             let mut file = File::open(&args[1])?;
-            let mut header = [0; 100];
-            file.read_exact(&mut header)?;
+            let mut raw_bytes = [0; 200];
+            file.read_exact(&mut raw_bytes)?;
 
-            // The page size is stored at the 16th byte offset, using 2 bytes in big-endian order
-            #[allow(unused_variables)]
-            let page_size = u16::from_be_bytes([header[16], header[17]]);
+            let (header, offset) = parser::parse_header(&raw_bytes);
+            let page = parser::parse_page(&raw_bytes, offset);
+
+            println!("database page size: {}", header.page_size);
+            println!("number of tables: {}", page.num_cells);
+
+            let page_size = u16::from_be_bytes([raw_bytes[16], raw_bytes[17]]);
 
             println!("database page size: {page_size}");
         }
