@@ -160,7 +160,10 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     let where_clause = if idx < splited_sql.len() && splited_sql[idx].to_uppercase() == "WHERE" {
         Some((
             splited_sql[idx + 1].to_string(),
-            splited_sql[idx + 3].to_string(),
+            splited_sql[idx + 3]
+                .to_string()
+                .trim_matches('\'')
+                .to_string(),
         ))
     } else {
         None
