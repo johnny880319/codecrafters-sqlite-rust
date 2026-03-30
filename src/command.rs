@@ -58,6 +58,11 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     let sql_query = parse_sql_query(&args[2])?;
     let column_names = sql_query.columns;
     let target_table_name = sql_query.table;
+    let (where_clause_col, where_clause_val) = if let Some((col, val)) = sql_query.where_clause {
+        (Some(col), Some(val))
+    } else {
+        (None, None)
+    };
 
     let mut file = File::open(&args[1])?;
     let (page_size, cell_count, page_bytes) = get_db_info(&mut file)?;
@@ -81,7 +86,17 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
             .iter()
             .map(|col_name| entry.tbl_columns.iter().position(|col| col == col_name))
             .collect::<Vec<_>>();
+        let where_clause_idx = if let Some(where_col) = where_clause_col {
+            entry.tbl_columns.iter().position(|col| col == &where_col)
+        } else {
+            None
+        };
         for row in rows {
+            if let Some(where_idx) = where_clause_idx
+                && row[where_idx] != *where_clause_val.as_ref().unwrap()
+            {
+                continue;
+            }
             for (i, col_idx) in col_idx_list.iter().enumerate() {
                 if let Some(col_idx) = col_idx {
                     print!("{}", row[*col_idx]);
@@ -113,6 +128,7 @@ fn get_db_info(file: &mut File) -> Result<(u16, u16, Vec<u8>)> {
 struct SqlQuery {
     columns: Vec<String>,
     table: String,
+    where_clause: Option<(String, String)>,
 }
 
 fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
@@ -138,8 +154,21 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     }
     idx += 1;
 
+    let table = splited_sql[idx].to_string();
+    idx += 1;
+
+    let where_clause = if idx < splited_sql.len() && splited_sql[idx].to_uppercase() == "WHERE" {
+        Some((
+            splited_sql[idx + 1].to_string(),
+            splited_sql[idx + 3].to_string(),
+        ))
+    } else {
+        None
+    };
+
     Ok(SqlQuery {
         columns,
-        table: splited_sql[idx].to_string(),
+        table,
+        where_clause,
     })
 }
