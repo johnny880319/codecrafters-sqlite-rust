@@ -1,13 +1,8 @@
-pub fn get_cell_count(page_bytes: &[u8], is_root: bool) -> u16 {
-    if is_root {
-        u16::from_be_bytes([page_bytes[103], page_bytes[104]])
-    } else {
-        u16::from_be_bytes([page_bytes[3], page_bytes[4]])
-    }
-}
-
 pub struct SchemaEntry {
     pub tbl_name: String,
+    pub tbl_columns: Vec<String>,
+    #[expect(dead_code)]
+    pub rowid_col_idx: Option<usize>,
     pub root_page: u32,
 }
 
@@ -34,23 +29,36 @@ fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
     let (type_length, offset) = handle_varint(raw_bytes, offset);
     let (name_length, offset) = handle_varint(raw_bytes, offset);
     let (tbl_name_length, offset) = handle_varint(raw_bytes, offset);
-    let (root_page_length, _) = handle_varint(raw_bytes, offset);
+    let (root_page_length, offset) = handle_varint(raw_bytes, offset);
+    let (sql_length, _) = handle_varint(raw_bytes, offset);
 
+    // only header length and root page length don't need to convert to text length.
     let type_length = (type_length - 13) / 2;
     let name_length = (name_length - 13) / 2;
     let tbl_name_length = (tbl_name_length - 13) / 2;
+    let sql_length = (sql_length - 13) / 2;
 
-    let name_start_offset = header_offset + header_length + type_length + name_length;
-    let name_end_offset = name_start_offset + tbl_name_length;
+    let type_offset = header_offset + header_length;
+    let name_offset = type_offset + type_length;
+    let tbl_name_offset = name_offset + name_length;
+    let root_page_offset = tbl_name_offset + tbl_name_length;
+    let sql_offset = root_page_offset + root_page_length;
+    let end_offset = sql_offset + sql_length;
+
     let tbl_name =
-        String::from_utf8_lossy(&raw_bytes[name_start_offset..name_end_offset]).to_string();
+        String::from_utf8_lossy(&raw_bytes[tbl_name_offset..root_page_offset]).to_string();
     let mut root_page = 0;
     for i in 0..root_page_length {
-        let byte = raw_bytes[name_end_offset + i];
+        let byte = raw_bytes[root_page_offset + i];
         root_page = (root_page << 8) | u32::from(byte);
     }
+    let sql_command = String::from_utf8_lossy(&raw_bytes[sql_offset..end_offset]).to_string();
+    let (tbl_columns, rowid_col_idx) = get_column_names(&sql_command);
+
     SchemaEntry {
         tbl_name,
+        tbl_columns,
+        rowid_col_idx,
         root_page,
     }
 }
@@ -66,4 +74,63 @@ fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
         }
     }
     (value, offset)
+}
+
+fn get_column_names(sql_command: &str) -> (Vec<String>, Option<usize>) {
+    let open_paren_index = sql_command.find('(').unwrap();
+    let close_paren_index = sql_command.rfind(')').unwrap();
+    let columns_str = &sql_command[open_paren_index + 1..close_paren_index];
+    let mut rowid_col_idx = None;
+    let columns = columns_str
+        .split(',')
+        .enumerate()
+        .map(|(i, s)| {
+            let strings = s.split_whitespace().collect::<Vec<_>>();
+            let col_name = strings[0].to_string();
+            if strings.iter().any(|&s| s.eq_ignore_ascii_case("primary")) {
+                rowid_col_idx = Some(i);
+            }
+            col_name
+        })
+        .collect::<Vec<_>>();
+    (columns, rowid_col_idx)
+}
+
+pub fn get_table_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
+
+    for i in 0..cell_count {
+        let mut offset =
+            u16::from_be_bytes([page_bytes[8 + i * 2], page_bytes[8 + i * 2 + 1]]) as usize;
+        // skip payload size annd header size
+        (_, offset) = handle_varint(page_bytes, offset);
+        let rowid;
+        (rowid, offset) = handle_varint(page_bytes, offset);
+        (_, offset) = handle_varint(page_bytes, offset);
+
+        let mut element_lengths = Vec::new();
+        for _ in 0..entry.tbl_columns.len() {
+            let length;
+            (length, offset) = handle_varint(page_bytes, offset);
+            element_lengths.push(if length >= 13 {
+                (length - 13) / 2
+            } else {
+                length
+            });
+        }
+
+        let mut row = Vec::new();
+        for length in element_lengths {
+            if length == 0 {
+                row.push(rowid.to_string());
+                continue;
+            }
+            let value = String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
+            row.push(value);
+            offset += length;
+        }
+        rows.push(row);
+    }
+    rows
 }

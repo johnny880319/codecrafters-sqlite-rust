@@ -51,8 +51,11 @@ fn cmd_tables(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-// Assume the command is "SELECT COUNT(*) FROM table_name" for now.
+// Assume the command are one of the below for now
+// "SELECT COUNT(*) FROM table_name"
+// "SELECT column_name FROM table_name"
 fn cmd_sql_query(args: &[String]) -> Result<()> {
+    let column_name = args[2].split_whitespace().nth(1).unwrap();
     let target_table_name = args[2].split_whitespace().nth(3).unwrap();
 
     let mut file = File::open(&args[1])?;
@@ -63,12 +66,25 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     let schema_entries = parser::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
 
     for entry in schema_entries {
-        if entry.tbl_name == target_table_name {
-            let page_bytes = pager::get_page_bytes(&mut file, page_size, entry.root_page)?;
-            let num_rows = parser::get_cell_count(&page_bytes, false);
-            println!("{num_rows}");
+        if entry.tbl_name != target_table_name {
+            continue;
+        }
+
+        let page_bytes = pager::get_page_bytes(&mut file, page_size, entry.root_page)?;
+        let rows = parser::get_table_rows(&page_bytes, &entry);
+        if column_name == "COUNT(*)" {
+            println!("{}", rows.len());
             return Ok(());
         }
+        let col_idx = entry.tbl_columns.iter().position(|col| col == column_name);
+        for row in rows {
+            if let Some(col_idx) = col_idx {
+                println!("{}", row[col_idx]);
+            } else {
+                bail!("Column {column_name} not found in table {target_table_name}");
+            }
+        }
+        return Ok(());
     }
     bail!("Table {target_table_name} not found");
 }
@@ -76,6 +92,6 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 fn get_db_info(file: &mut File) -> Result<(u16, u16, Vec<u8>)> {
     let page_size = pager::get_page_size(file)?;
     let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
-    let cell_count = parser::get_cell_count(&page_bytes, true);
+    let cell_count = u16::from_be_bytes([page_bytes[103], page_bytes[104]]);
     Ok((page_size, cell_count, page_bytes))
 }
