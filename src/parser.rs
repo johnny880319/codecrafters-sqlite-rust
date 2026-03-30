@@ -80,6 +80,7 @@ fn get_column_names(sql_command: &str) -> Vec<String> {
 
     columns_str
         .split(',')
+        .filter(|s| !s.to_uppercase().starts_with("PRIMARY"))
         .map(|s| s.split_whitespace().next().unwrap().to_string())
         .collect::<Vec<_>>()
 }
