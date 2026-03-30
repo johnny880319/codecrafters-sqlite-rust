@@ -56,7 +56,7 @@ fn cmd_tables(args: &[String]) -> Result<()> {
 // "SELECT column_name FROM table_name"
 fn cmd_sql_query(args: &[String]) -> Result<()> {
     let sql_query = parse_sql_query(&args[2])?;
-    let column_name = sql_query.columns[0].clone();
+    let column_names = sql_query.columns;
     let target_table_name = sql_query.table;
 
     let mut file = File::open(&args[1])?;
@@ -73,17 +73,30 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 
         let page_bytes = pager::get_page_bytes(&mut file, page_size, entry.root_page)?;
         let rows = parser::get_table_rows(&page_bytes, &entry);
-        if column_name.to_uppercase() == "COUNT(*)" {
+        if column_names.len() == 1 && column_names[0].to_uppercase() == "COUNT(*)" {
             println!("{}", rows.len());
             return Ok(());
         }
-        let col_idx = entry.tbl_columns.iter().position(|col| *col == column_name);
+        let col_idx_list = column_names
+            .iter()
+            .map(|col_name| entry.tbl_columns.iter().position(|col| col == col_name))
+            .collect::<Vec<_>>();
         for row in rows {
-            if let Some(col_idx) = col_idx {
-                println!("{}", row[col_idx]);
-            } else {
-                bail!("Column {column_name} not found in table {target_table_name}");
+            for (i, col_idx) in col_idx_list.iter().enumerate() {
+                if let Some(col_idx) = col_idx {
+                    print!("{}", row[*col_idx]);
+                } else {
+                    bail!(
+                        "Column {} not found in table {}",
+                        column_names[i],
+                        target_table_name
+                    );
+                }
+                if i != col_idx_list.len() - 1 {
+                    print!("|");
+                }
             }
+            println!();
         }
         return Ok(());
     }
@@ -107,14 +120,21 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     sql = sql.strip_suffix(';').unwrap_or(sql);
     sql = sql.trim();
     let splited_sql = sql.split_whitespace().collect::<Vec<&str>>();
-    if splited_sql.len() != 4 {
+
+    let mut idx = 0;
+    if splited_sql[idx].to_uppercase() != "SELECT" {
         bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
     }
-    if splited_sql[0].to_uppercase() != "SELECT" || splited_sql[2].to_uppercase() != "FROM" {
-        bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
+    idx += 1;
+    let mut columns = Vec::new();
+    while splited_sql[idx].to_uppercase() != "FROM" {
+        columns.push(splited_sql[idx].to_string());
+        idx += 1;
     }
+    idx += 1;
+
     Ok(SqlQuery {
-        columns: vec![splited_sql[1].to_string()],
-        table: splited_sql[3].to_string(),
+        columns,
+        table: splited_sql[idx].to_string(),
     })
 }
