@@ -72,7 +72,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 
         let page_bytes = pager::get_page_bytes(&mut file, page_size, entry.root_page)?;
         let rows = parser::get_table_rows(&page_bytes, &entry);
-        if column_name == "COUNT(*)" {
+        if column_name.to_uppercase() == "COUNT(*)" {
             println!("{}", rows.len());
             return Ok(());
         }
