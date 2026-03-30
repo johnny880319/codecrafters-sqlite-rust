@@ -55,8 +55,9 @@ fn cmd_tables(args: &[String]) -> Result<()> {
 // "SELECT COUNT(*) FROM table_name"
 // "SELECT column_name FROM table_name"
 fn cmd_sql_query(args: &[String]) -> Result<()> {
-    let column_name = args[2].split_whitespace().nth(1).unwrap();
-    let target_table_name = args[2].split_whitespace().nth(3).unwrap();
+    let sql_query = parse_sql_query(&args[2])?;
+    let column_name = sql_query.columns[0].clone();
+    let target_table_name = sql_query.table;
 
     let mut file = File::open(&args[1])?;
     let (page_size, cell_count, page_bytes) = get_db_info(&mut file)?;
@@ -76,7 +77,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
             println!("{}", rows.len());
             return Ok(());
         }
-        let col_idx = entry.tbl_columns.iter().position(|col| col == column_name);
+        let col_idx = entry.tbl_columns.iter().position(|col| *col == column_name);
         for row in rows {
             if let Some(col_idx) = col_idx {
                 println!("{}", row[col_idx]);
@@ -94,4 +95,27 @@ fn get_db_info(file: &mut File) -> Result<(u16, u16, Vec<u8>)> {
     let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
     let cell_count = u16::from_be_bytes([page_bytes[103], page_bytes[104]]);
     Ok((page_size, cell_count, page_bytes))
+}
+
+struct SqlQuery {
+    columns: Vec<String>,
+    table: String,
+}
+
+fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
+    sql = sql.trim();
+    sql = sql.strip_suffix(';').unwrap_or(sql);
+    sql = sql.trim();
+    let sql = sql.to_uppercase();
+    let splited_sql = sql.split_whitespace().collect::<Vec<&str>>();
+    if splited_sql.len() != 4 {
+        bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
+    }
+    if splited_sql[0] != "SELECT" || splited_sql[2] != "FROM" {
+        bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
+    }
+    Ok(SqlQuery {
+        columns: vec![splited_sql[1].to_string()],
+        table: splited_sql[3].to_string(),
+    })
 }
