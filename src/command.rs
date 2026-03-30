@@ -128,7 +128,12 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     idx += 1;
     let mut columns = Vec::new();
     while splited_sql[idx].to_uppercase() != "FROM" {
-        columns.push(splited_sql[idx].to_string());
+        columns.push(
+            splited_sql[idx]
+                .strip_suffix(',')
+                .unwrap_or(splited_sql[idx])
+                .to_string(),
+        );
         idx += 1;
     }
     idx += 1;
