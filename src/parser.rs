@@ -97,25 +97,36 @@ pub fn get_table_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>
         (rowid, offset) = handle_varint(page_bytes, offset);
         (_, offset) = handle_varint(page_bytes, offset);
 
-        let mut element_lengths = Vec::new();
+        let mut element_prop = Vec::new();
         for _ in 0..entry.tbl_columns.len() {
             let length;
             (length, offset) = handle_varint(page_bytes, offset);
-            element_lengths.push(if length >= 13 {
-                (length - 13) / 2
+            element_prop.push(if length >= 13 {
+                ((length - 13) / 2, "TEXT")
             } else {
-                length
+                (length, "INT")
             });
         }
 
         let mut row = Vec::new();
-        for length in element_lengths {
+        for (length, data_type) in element_prop {
             if length == 0 {
                 row.push(rowid.to_string());
                 continue;
             }
-            let value = String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
-            row.push(value);
+            if data_type == "TEXT" {
+                let value =
+                    String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
+                row.push(value);
+                offset += length;
+                continue;
+            }
+            let mut value = 0;
+            for i in 0..length {
+                let byte = page_bytes[offset + i];
+                value = (value << 8) | u64::from(byte);
+            }
+            row.push(value.to_string());
             offset += length;
         }
         rows.push(row);
