@@ -106,12 +106,11 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     sql = sql.trim();
     sql = sql.strip_suffix(';').unwrap_or(sql);
     sql = sql.trim();
-    let sql = sql.to_uppercase();
     let splited_sql = sql.split_whitespace().collect::<Vec<&str>>();
     if splited_sql.len() != 4 {
         bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
     }
-    if splited_sql[0] != "SELECT" || splited_sql[2] != "FROM" {
+    if splited_sql[0].to_uppercase() != "SELECT" || splited_sql[2].to_uppercase() != "FROM" {
         bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
     }
     Ok(SqlQuery {
