@@ -1,8 +1,6 @@
 pub struct SchemaEntry {
     pub tbl_name: String,
     pub tbl_columns: Vec<String>,
-    #[expect(dead_code)]
-    pub rowid_col_idx: Option<usize>,
     pub root_page: u32,
 }
 
@@ -53,12 +51,11 @@ fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
         root_page = (root_page << 8) | u32::from(byte);
     }
     let sql_command = String::from_utf8_lossy(&raw_bytes[sql_offset..end_offset]).to_string();
-    let (tbl_columns, rowid_col_idx) = get_column_names(&sql_command);
+    let tbl_columns = get_column_names(&sql_command);
 
     SchemaEntry {
         tbl_name,
         tbl_columns,
-        rowid_col_idx,
         root_page,
     }
 }
@@ -76,24 +73,15 @@ fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
     (value, offset)
 }
 
-fn get_column_names(sql_command: &str) -> (Vec<String>, Option<usize>) {
+fn get_column_names(sql_command: &str) -> Vec<String> {
     let open_paren_index = sql_command.find('(').unwrap();
     let close_paren_index = sql_command.rfind(')').unwrap();
     let columns_str = &sql_command[open_paren_index + 1..close_paren_index];
-    let mut rowid_col_idx = None;
-    let columns = columns_str
+
+    columns_str
         .split(',')
-        .enumerate()
-        .map(|(i, s)| {
-            let strings = s.split_whitespace().collect::<Vec<_>>();
-            let col_name = strings[0].to_string();
-            if strings.iter().any(|&s| s.eq_ignore_ascii_case("primary")) {
-                rowid_col_idx = Some(i);
-            }
-            col_name
-        })
-        .collect::<Vec<_>>();
-    (columns, rowid_col_idx)
+        .map(|s| s.split_whitespace().next().unwrap().to_string())
+        .collect::<Vec<_>>()
 }
 
 pub fn get_table_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>> {
