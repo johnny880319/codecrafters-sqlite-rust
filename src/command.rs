@@ -136,11 +136,8 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     sql = sql.trim();
 
     let where_part;
-    (sql, where_part) = if let Some((sql, where_clause)) = sql.split_once("WHERE") {
-        (sql.trim(), Some(where_clause.trim()))
-    } else {
-        (sql, None)
-    };
+    let where_idx = sql.to_uppercase().find("WHERE");
+    (sql, where_part) = where_idx.map_or((sql, None), |idx| (&sql[..idx], Some(&sql[idx + 5..])));
 
     let splited_sql = sql.split_whitespace().collect::<Vec<&str>>();
 
