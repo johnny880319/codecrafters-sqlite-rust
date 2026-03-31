@@ -1,3 +1,7 @@
+use crate::pager;
+use anyhow::{Result, bail};
+use std::fs::File;
+
 pub struct SchemaEntry {
     pub tbl_name: String,
     pub tbl_columns: Vec<String>,
@@ -85,7 +89,40 @@ fn get_column_names(sql_command: &str) -> Vec<String> {
         .collect::<Vec<_>>()
 }
 
-pub fn get_table_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>> {
+pub fn get_all_rows(
+    file: &mut File,
+    page_size: u16,
+    page_num: u32,
+    entry: &SchemaEntry,
+) -> Result<Vec<Vec<String>>> {
+    let page_bytes = pager::get_page_bytes(file, page_size, page_num)?;
+    let page_type = page_bytes[0];
+    if page_type == 0x0d {
+        return Ok(get_leaf_rows(&page_bytes, entry));
+    }
+    if page_type == 0x05 {
+        let mut rows = Vec::new();
+        let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
+        for i in 0..cell_count {
+            let cell_offset =
+                u16::from_be_bytes([page_bytes[12 + i * 2], page_bytes[12 + i * 2 + 1]]) as usize;
+            let child_page = u32::from_be_bytes([
+                page_bytes[cell_offset],
+                page_bytes[cell_offset + 1],
+                page_bytes[cell_offset + 2],
+                page_bytes[cell_offset + 3],
+            ]);
+            rows.extend(get_all_rows(file, page_size, child_page, entry)?);
+        }
+        let right_child_page =
+            u32::from_be_bytes([page_bytes[8], page_bytes[9], page_bytes[10], page_bytes[11]]);
+        rows.extend(get_all_rows(file, page_size, right_child_page, entry)?);
+        return Ok(rows);
+    }
+    bail!("Unsupported page type: {page_type}");
+}
+
+pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
     let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
 

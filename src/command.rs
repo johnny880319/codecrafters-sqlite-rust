@@ -76,8 +76,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
             continue;
         }
 
-        let page_bytes = pager::get_page_bytes(&mut file, page_size, entry.root_page)?;
-        let rows = parser::get_table_rows(&page_bytes, &entry);
+        let rows = parser::get_all_rows(&mut file, page_size, entry.root_page, &entry)?;
         if column_names.len() == 1 && column_names[0].to_uppercase() == "COUNT(*)" {
             println!("{}", rows.len());
             return Ok(());
