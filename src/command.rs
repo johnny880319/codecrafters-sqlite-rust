@@ -134,6 +134,14 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     sql = sql.trim();
     sql = sql.strip_suffix(';').unwrap_or(sql);
     sql = sql.trim();
+
+    let where_part;
+    (sql, where_part) = if let Some((sql, where_clause)) = sql.split_once("WHERE") {
+        (sql.trim(), Some(where_clause.trim()))
+    } else {
+        (sql, None)
+    };
+
     let splited_sql = sql.split_whitespace().collect::<Vec<&str>>();
 
     let mut idx = 0;
@@ -154,15 +162,14 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     idx += 1;
 
     let table = splited_sql[idx].to_string();
-    idx += 1;
 
-    let where_clause = if idx < splited_sql.len() && splited_sql[idx].to_uppercase() == "WHERE" {
+    let where_clause = if let Some(where_part) = where_part {
+        let (col, val) = where_part.split_once('=').ok_or_else(|| {
+            anyhow::anyhow!("Only support simple WHERE clause with format: column_name=value")
+        })?;
         Some((
-            splited_sql[idx + 1].to_string(),
-            splited_sql[idx + 3]
-                .to_string()
-                .trim_matches('\'')
-                .to_string(),
+            col.trim().to_string(),
+            val.trim().to_string().trim_matches('\'').to_string(),
         ))
     } else {
         None
