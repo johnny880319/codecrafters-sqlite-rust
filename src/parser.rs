@@ -139,11 +139,7 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
         for _ in 0..entry.tbl_columns.len() {
             let length;
             (length, offset) = handle_varint(page_bytes, offset);
-            element_prop.push(if length >= 13 {
-                ((length - 13) / 2, "TEXT")
-            } else {
-                (length, "INT")
-            });
+            element_prop.push(get_serial_type(length));
         }
 
         let mut row = Vec::new();
@@ -170,4 +166,19 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
         rows.push(row);
     }
     rows
+}
+
+fn get_serial_type(length: usize) -> (usize, String) {
+    match length {
+        0 => (0, "NULL".to_string()),
+        l if (1..=4).contains(&l) => (l, "INT".to_string()),
+        5 => (6, "INT".to_string()),
+        6 => (8, "INT".to_string()),
+        7 => (8, "FLOAT".to_string()),
+        8 => (0, "ZERO".to_string()),
+        9 => (0, "ONE".to_string()),
+        l if l >= 13 && l % 2 == 1 => ((l - 13) / 2, "TEXT".to_string()),
+        l if l >= 12 && l % 2 == 0 => ((l - 12) / 2, "BLOB".to_string()),
+        _ => panic!("Invalid serial type length: {length}"),
+    }
 }
