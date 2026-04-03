@@ -4,6 +4,7 @@ use std::fs::File;
 
 pub struct SchemaEntry {
     pub tbl_name: String,
+    pub tbl_type: String,
     pub tbl_columns: Vec<String>,
     pub root_page: u32,
 }
@@ -47,6 +48,7 @@ fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
     let sql_offset = root_page_offset + root_page_length;
     let end_offset = sql_offset + sql_length;
 
+    let tbl_type = String::from_utf8_lossy(&raw_bytes[type_offset..name_offset]).to_string();
     let tbl_name =
         String::from_utf8_lossy(&raw_bytes[tbl_name_offset..root_page_offset]).to_string();
     let mut root_page = 0;
@@ -59,6 +61,7 @@ fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
 
     SchemaEntry {
         tbl_name,
+        tbl_type,
         tbl_columns,
         root_page,
     }
@@ -166,6 +169,195 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
         rows.push(row);
     }
     rows
+}
+
+pub fn get_target_rowids(
+    file: &mut File,
+    page_size: u16,
+    page_num: u32,
+    target: &str,
+) -> Result<Vec<u32>> {
+    let page_bytes = pager::get_page_bytes(file, page_size, page_num)?;
+    let page_type = page_bytes[0];
+    if page_type == 0x0a {
+        return get_target_rowids_leaf(&page_bytes, target);
+    }
+    if page_type == 0x02 {
+        let mut rows = Vec::new();
+        let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
+        let right_child_page =
+            u32::from_be_bytes([page_bytes[8], page_bytes[9], page_bytes[10], page_bytes[11]]);
+
+        for i in 0..cell_count {
+            let mut cell_offset =
+                u16::from_be_bytes([page_bytes[12 + i * 2], page_bytes[12 + i * 2 + 1]]) as usize;
+            let child_page = u32::from_be_bytes([
+                page_bytes[cell_offset],
+                page_bytes[cell_offset + 1],
+                page_bytes[cell_offset + 2],
+                page_bytes[cell_offset + 3],
+            ]);
+            (_, cell_offset) = handle_varint(&page_bytes, cell_offset + 4);
+            let header_offset = cell_offset;
+            let (header_length, cell_offset) = handle_varint(&page_bytes, header_offset);
+            let (idx_serial_type, cell_offset) = handle_varint(&page_bytes, cell_offset);
+            let (rowid_serial_type, _) = handle_varint(&page_bytes, cell_offset);
+            let mut cell_offset = header_offset + header_length;
+
+            let (idx_length, _) = get_serial_type(idx_serial_type);
+            let (rowid_length, _) = get_serial_type(rowid_serial_type);
+
+            let idx_value =
+                String::from_utf8_lossy(&page_bytes[cell_offset..cell_offset + idx_length])
+                    .to_string();
+            cell_offset += idx_length;
+            let mut rowid_value = 0;
+            for i in 0..rowid_length {
+                let byte = page_bytes[cell_offset + i];
+                rowid_value = (rowid_value << 8) | u64::from(byte);
+            }
+
+            if idx_value.as_str() > target {
+                rows.extend(get_target_rowids(file, page_size, child_page, target)?);
+                return Ok(rows);
+            }
+            if idx_value.as_str() == target {
+                rows.extend(get_target_rowids(file, page_size, child_page, target)?);
+                rows.push(u32::try_from(rowid_value)?);
+            }
+        }
+        rows.extend(get_target_rowids(
+            file,
+            page_size,
+            right_child_page,
+            target,
+        )?);
+        return Ok(rows);
+    }
+    bail!("Unsupported page type: {page_type}");
+}
+
+fn get_target_rowids_leaf(page_bytes: &[u8], target: &str) -> Result<Vec<u32>> {
+    let mut rows = Vec::new();
+    let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
+
+    for i in 0..cell_count {
+        let mut cell_offset =
+            u16::from_be_bytes([page_bytes[8 + i * 2], page_bytes[8 + i * 2 + 1]]) as usize;
+
+        (_, cell_offset) = handle_varint(page_bytes, cell_offset);
+        let header_offset = cell_offset;
+        let (header_length, cell_offset) = handle_varint(page_bytes, header_offset);
+        let (idx_serial_type, cell_offset) = handle_varint(page_bytes, cell_offset);
+        let (rowid_serial_type, _) = handle_varint(page_bytes, cell_offset);
+        let mut cell_offset = header_offset + header_length;
+
+        let (idx_length, _) = get_serial_type(idx_serial_type);
+        let (rowid_length, _) = get_serial_type(rowid_serial_type);
+
+        let idx_value =
+            String::from_utf8_lossy(&page_bytes[cell_offset..cell_offset + idx_length]).to_string();
+        cell_offset += idx_length;
+        let mut rowid_value = 0;
+        for i in 0..rowid_length {
+            let byte = page_bytes[cell_offset + i];
+            rowid_value = (rowid_value << 8) | u64::from(byte);
+        }
+
+        if idx_value == target {
+            rows.push(u32::try_from(rowid_value)?);
+        }
+    }
+    Ok(rows)
+}
+
+pub fn get_row_by_rowid(
+    file: &mut File,
+    page_size: u16,
+    page_num: u32,
+    entry: &SchemaEntry,
+    target_rowid: usize,
+) -> Result<Vec<String>> {
+    let page_bytes = pager::get_page_bytes(file, page_size, page_num)?;
+    let page_type = page_bytes[0];
+    if page_type == 0x0d {
+        return get_row_by_rowid_leaf(&page_bytes, entry, target_rowid);
+    }
+    if page_type == 0x05 {
+        let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
+        let right_child_page =
+            u32::from_be_bytes([page_bytes[8], page_bytes[9], page_bytes[10], page_bytes[11]]);
+
+        for i in 0..cell_count {
+            let cell_offset =
+                u16::from_be_bytes([page_bytes[12 + i * 2], page_bytes[12 + i * 2 + 1]]) as usize;
+            let child_page = u32::from_be_bytes([
+                page_bytes[cell_offset],
+                page_bytes[cell_offset + 1],
+                page_bytes[cell_offset + 2],
+                page_bytes[cell_offset + 3],
+            ]);
+            let (rowid, _) = handle_varint(&page_bytes, cell_offset + 4);
+            if rowid >= target_rowid {
+                return get_row_by_rowid(file, page_size, child_page, entry, target_rowid);
+            }
+        }
+        return get_row_by_rowid(file, page_size, right_child_page, entry, target_rowid);
+    }
+    bail!("Unsupported page type: {page_type}");
+}
+
+fn get_row_by_rowid_leaf(
+    page_bytes: &[u8],
+    entry: &SchemaEntry,
+    target_rowid: usize,
+) -> Result<Vec<String>> {
+    let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
+
+    for i in 0..cell_count {
+        let mut offset =
+            u16::from_be_bytes([page_bytes[8 + i * 2], page_bytes[8 + i * 2 + 1]]) as usize;
+        // skip payload size annd header size
+        (_, offset) = handle_varint(page_bytes, offset);
+        let rowid;
+        (rowid, offset) = handle_varint(page_bytes, offset);
+        (_, offset) = handle_varint(page_bytes, offset);
+
+        if rowid != target_rowid {
+            continue;
+        }
+
+        let mut element_prop = Vec::new();
+        for _ in 0..entry.tbl_columns.len() {
+            let length;
+            (length, offset) = handle_varint(page_bytes, offset);
+            element_prop.push(get_serial_type(length));
+        }
+
+        let mut row = Vec::new();
+        for (length, data_type) in element_prop {
+            if length == 0 {
+                row.push(rowid.to_string());
+                continue;
+            }
+            if data_type == "TEXT" {
+                let value =
+                    String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
+                row.push(value);
+                offset += length;
+                continue;
+            }
+            let mut value = 0;
+            for i in 0..length {
+                let byte = page_bytes[offset + i];
+                value = (value << 8) | u64::from(byte);
+            }
+            row.push(value.to_string());
+            offset += length;
+        }
+        return Ok(row);
+    }
+    bail!("Rowid {target_rowid} not found in leaf page");
 }
 
 fn get_serial_type(length: usize) -> (usize, String) {

@@ -1,4 +1,7 @@
-use crate::{pager, parser};
+use crate::{
+    pager,
+    parser::{self, SchemaEntry},
+};
 use anyhow::{Result, bail};
 use std::fs::File;
 
@@ -56,13 +59,6 @@ fn cmd_tables(args: &[String]) -> Result<()> {
 // "SELECT column_name FROM table_name"
 fn cmd_sql_query(args: &[String]) -> Result<()> {
     let sql_query = parse_sql_query(&args[2])?;
-    let column_names = sql_query.columns;
-    let target_table_name = sql_query.table;
-    let (where_clause_col, where_clause_val) = if let Some((col, val)) = sql_query.where_clause {
-        (Some(col), Some(val))
-    } else {
-        (None, None)
-    };
 
     let mut file = File::open(&args[1])?;
     let (page_size, cell_count, page_bytes) = get_db_info(&mut file)?;
@@ -71,50 +67,116 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 
     let schema_entries = parser::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
 
+    if let Some((where_col, _)) = &sql_query.where_clause {
+        for entry in &schema_entries {
+            if entry.tbl_name == sql_query.table
+                && entry.tbl_type.to_uppercase() == "INDEX"
+                && entry.tbl_columns[0] == *where_col
+            {
+                let ids = parser::get_target_rowids(
+                    &mut file,
+                    page_size,
+                    entry.root_page,
+                    &sql_query.where_clause.as_ref().unwrap().1,
+                )?;
+                return print_result_by_index(ids, &schema_entries, &sql_query, file, page_size);
+            }
+        }
+    }
+
+    print_result_by_table(schema_entries, sql_query, file, page_size)
+}
+
+fn print_result_by_index(
+    ids: Vec<u32>,
+    schema_entries: &[SchemaEntry],
+    sql_query: &SqlQuery,
+    mut file: File,
+    page_size: u16,
+) -> Result<()> {
+    let mut schema_entry = None;
     for entry in schema_entries {
-        if entry.tbl_name != target_table_name {
+        if entry.tbl_name == sql_query.table
+            && entry.tbl_type.to_uppercase() == "TABLE"
+            && entry
+                .tbl_columns
+                .contains(&sql_query.where_clause.as_ref().unwrap().0)
+        {
+            schema_entry = Some(entry);
+            break;
+        }
+    }
+    let mut rows = Vec::new();
+    for id in ids {
+        rows.push(parser::get_row_by_rowid(
+            &mut file,
+            page_size,
+            schema_entry.as_ref().unwrap().root_page,
+            schema_entry.as_ref().unwrap(),
+            id as usize,
+        )?);
+    }
+
+    print_rows(rows, &sql_query.columns, schema_entry.as_ref().unwrap())
+}
+
+fn print_result_by_table(
+    schema_entries: Vec<SchemaEntry>,
+    sql_query: SqlQuery,
+    mut file: File,
+    page_size: u16,
+) -> Result<()> {
+    let (where_clause_col, where_clause_val) = if let Some((col, val)) = sql_query.where_clause {
+        (Some(col), Some(val))
+    } else {
+        (None, None)
+    };
+
+    for entry in schema_entries {
+        if entry.tbl_name != sql_query.table || entry.tbl_type.to_uppercase() != "TABLE" {
             continue;
         }
 
-        let rows = parser::get_all_rows(&mut file, page_size, entry.root_page, &entry)?;
-        if column_names.len() == 1 && column_names[0].to_uppercase() == "COUNT(*)" {
-            println!("{}", rows.len());
-            return Ok(());
-        }
-        let col_idx_list = column_names
-            .iter()
-            .map(|col_name| entry.tbl_columns.iter().position(|col| col == col_name))
-            .collect::<Vec<_>>();
+        let mut rows = parser::get_all_rows(&mut file, page_size, entry.root_page, &entry)?;
+
         let where_clause_idx = if let Some(where_col) = where_clause_col {
             entry.tbl_columns.iter().position(|col| col == &where_col)
         } else {
             None
         };
-        for row in rows {
-            if let Some(where_idx) = where_clause_idx
-                && row[where_idx] != *where_clause_val.as_ref().unwrap()
-            {
-                continue;
-            }
-            for (i, col_idx) in col_idx_list.iter().enumerate() {
-                if let Some(col_idx) = col_idx {
-                    print!("{}", row[*col_idx]);
-                } else {
-                    bail!(
-                        "Column {} not found in table {}",
-                        column_names[i],
-                        target_table_name
-                    );
-                }
-                if i != col_idx_list.len() - 1 {
-                    print!("|");
-                }
-            }
-            println!();
+        if let Some(where_idx) = where_clause_idx {
+            rows.retain(|row| row[where_idx] == *where_clause_val.as_ref().unwrap());
         }
+
+        return print_rows(rows, &sql_query.columns, &entry);
+    }
+    bail!("Table {} not found", sql_query.table);
+}
+
+fn print_rows(rows: Vec<Vec<String>>, column_names: &[String], entry: &SchemaEntry) -> Result<()> {
+    if column_names.len() == 1 && column_names[0].to_uppercase() == "COUNT(*)" {
+        println!("{}", rows.len());
         return Ok(());
     }
-    bail!("Table {target_table_name} not found");
+    let col_idx_list = column_names
+        .iter()
+        .map(|col_name| entry.tbl_columns.iter().position(|col| col == col_name))
+        .collect::<Vec<_>>();
+
+    for row in rows {
+        for (i, col_idx) in col_idx_list.iter().enumerate() {
+            if let Some(col_idx) = col_idx {
+                print!("{}", row[*col_idx]);
+            } else {
+                bail!("Column index not found");
+            }
+            if i != col_idx_list.len() - 1 {
+                print!("|");
+            }
+        }
+        println!();
+    }
+    Ok(())
 }
 
 fn get_db_info(file: &mut File) -> Result<(u16, u16, Vec<u8>)> {
