@@ -1,6 +1,7 @@
 use crate::{
     pager,
     parser::{self, SchemaEntry},
+    utils,
 };
 use anyhow::{Result, bail};
 use std::fs::File;
@@ -92,7 +93,7 @@ fn print_result_by_index(
     schema_entries: &[SchemaEntry],
     sql_query: &SqlQuery,
     mut file: File,
-    page_size: u16,
+    page_size: usize,
 ) -> Result<()> {
     let mut schema_entry = None;
     for entry in schema_entries {
@@ -124,7 +125,7 @@ fn print_result_by_table(
     schema_entries: Vec<SchemaEntry>,
     sql_query: SqlQuery,
     mut file: File,
-    page_size: u16,
+    page_size: usize,
 ) -> Result<()> {
     let (where_clause_col, where_clause_val) = if let Some((col, val)) = sql_query.where_clause {
         (Some(col), Some(val))
@@ -179,10 +180,10 @@ fn print_rows(rows: Vec<Vec<String>>, column_names: &[String], entry: &SchemaEnt
     Ok(())
 }
 
-fn get_db_info(file: &mut File) -> Result<(u16, u16, Vec<u8>)> {
+fn get_db_info(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
     let page_size = pager::get_page_size(file)?;
     let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
-    let cell_count = u16::from_be_bytes([page_bytes[103], page_bytes[104]]);
+    let cell_count = utils::bytes_to_usize(&page_bytes, 103, 2);
     Ok((page_size, cell_count, page_bytes))
 }
 

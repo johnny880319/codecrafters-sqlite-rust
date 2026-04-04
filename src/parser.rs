@@ -6,16 +6,18 @@ pub struct SchemaEntry {
     pub tbl_name: String,
     pub tbl_type: String,
     pub tbl_columns: Vec<String>,
-    pub root_page: u32,
+    pub root_page: usize,
 }
 
-pub fn parse_schema_entries(raw_bytes: &[u8], offset: usize, num_entries: u16) -> Vec<SchemaEntry> {
+pub fn parse_schema_entries(
+    raw_bytes: &[u8],
+    offset: usize,
+    num_entries: usize,
+) -> Vec<SchemaEntry> {
     let mut entries = Vec::new();
     for i in 0..num_entries {
-        let cell_offset = u16::from_be_bytes([
-            raw_bytes[offset + (i as usize) * 2],
-            raw_bytes[offset + (i as usize) * 2 + 1],
-        ]) as usize;
+        let cell_offset = utils::bytes_to_usize(raw_bytes, offset + i * 2, 2);
+
         let table_info = parse_schema_entry(raw_bytes, cell_offset);
         entries.push(table_info);
     }
@@ -51,11 +53,8 @@ fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
     let tbl_type = String::from_utf8_lossy(&raw_bytes[type_offset..name_offset]).to_string();
     let tbl_name =
         String::from_utf8_lossy(&raw_bytes[tbl_name_offset..root_page_offset]).to_string();
-    let mut root_page = 0;
-    for i in 0..root_page_length {
-        let byte = raw_bytes[root_page_offset + i];
-        root_page = (root_page << 8) | u32::from(byte);
-    }
+    let root_page = utils::bytes_to_usize(raw_bytes, root_page_offset, root_page_length);
+
     let sql_command = String::from_utf8_lossy(&raw_bytes[sql_offset..end_offset]).to_string();
     let tbl_columns = get_column_names(&sql_command);
 
@@ -94,8 +93,8 @@ fn get_column_names(sql_command: &str) -> Vec<String> {
 
 pub fn get_all_rows(
     file: &mut File,
-    page_size: u16,
-    page_num: u32,
+    page_size: usize,
+    page_num: usize,
     entry: &SchemaEntry,
 ) -> Result<Vec<Vec<String>>> {
     let page_bytes = pager::get_page_bytes(file, page_size, page_num)?;
@@ -105,20 +104,13 @@ pub fn get_all_rows(
     }
     if page_type == 0x05 {
         let mut rows = Vec::new();
-        let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
+        let cell_count = utils::bytes_to_usize(&page_bytes, 3, 2);
         for i in 0..cell_count {
-            let cell_offset =
-                u16::from_be_bytes([page_bytes[12 + i * 2], page_bytes[12 + i * 2 + 1]]) as usize;
-            let child_page = u32::from_be_bytes([
-                page_bytes[cell_offset],
-                page_bytes[cell_offset + 1],
-                page_bytes[cell_offset + 2],
-                page_bytes[cell_offset + 3],
-            ]);
+            let cell_offset = utils::bytes_to_usize(&page_bytes, 12 + i * 2, 2);
+            let child_page = utils::bytes_to_usize(&page_bytes, cell_offset, 4);
             rows.extend(get_all_rows(file, page_size, child_page, entry)?);
         }
-        let right_child_page =
-            u32::from_be_bytes([page_bytes[8], page_bytes[9], page_bytes[10], page_bytes[11]]);
+        let right_child_page = utils::bytes_to_usize(&page_bytes, 8, 4);
         rows.extend(get_all_rows(file, page_size, right_child_page, entry)?);
         return Ok(rows);
     }
@@ -173,8 +165,8 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
 
 pub fn get_target_rowids(
     file: &mut File,
-    page_size: u16,
-    page_num: u32,
+    page_size: usize,
+    page_num: usize,
     target: &str,
 ) -> Result<Vec<u32>> {
     let page_bytes = pager::get_page_bytes(file, page_size, page_num)?;
@@ -195,18 +187,12 @@ pub fn get_target_rowids(
         return Ok(rowids);
     }
     if page_type == 0x02 {
-        let right_child_page =
-            u32::from_be_bytes([page_bytes[8], page_bytes[9], page_bytes[10], page_bytes[11]]);
+        let right_child_page = utils::bytes_to_usize(&page_bytes, 8, 4);
 
         for i in 0..cell_count {
-            let cell_offset =
-                u16::from_be_bytes([page_bytes[12 + i * 2], page_bytes[12 + i * 2 + 1]]) as usize;
-            let child_page = u32::from_be_bytes([
-                page_bytes[cell_offset],
-                page_bytes[cell_offset + 1],
-                page_bytes[cell_offset + 2],
-                page_bytes[cell_offset + 3],
-            ]);
+            let cell_offset = utils::bytes_to_usize(&page_bytes, 12 + i * 2, 2);
+            let child_page = utils::bytes_to_usize(&page_bytes, cell_offset, 4);
+
             let (idx_value, rowid_value) =
                 parse_rowid_from_index_cell(&page_bytes, cell_offset + 4);
 
@@ -251,8 +237,8 @@ fn parse_rowid_from_index_cell(page_bytes: &[u8], cell_offset: usize) -> (String
 
 pub fn get_row_by_rowid(
     file: &mut File,
-    page_size: u16,
-    page_num: u32,
+    page_size: usize,
+    page_num: usize,
     entry: &SchemaEntry,
     target_rowid: usize,
 ) -> Result<Vec<String>> {
@@ -263,18 +249,12 @@ pub fn get_row_by_rowid(
     }
     if page_type == 0x05 {
         let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
-        let right_child_page =
-            u32::from_be_bytes([page_bytes[8], page_bytes[9], page_bytes[10], page_bytes[11]]);
+        let right_child_page = utils::bytes_to_usize(&page_bytes, 8, 4);
 
         for i in 0..cell_count {
-            let cell_offset =
-                u16::from_be_bytes([page_bytes[12 + i * 2], page_bytes[12 + i * 2 + 1]]) as usize;
-            let child_page = u32::from_be_bytes([
-                page_bytes[cell_offset],
-                page_bytes[cell_offset + 1],
-                page_bytes[cell_offset + 2],
-                page_bytes[cell_offset + 3],
-            ]);
+            let cell_offset = utils::bytes_to_usize(&page_bytes, 12 + i * 2, 2);
+            let child_page = utils::bytes_to_usize(&page_bytes, cell_offset, 4);
+
             let (rowid, _) = handle_varint(&page_bytes, cell_offset + 4);
             if rowid >= target_rowid {
                 return get_row_by_rowid(file, page_size, child_page, entry, target_rowid);
