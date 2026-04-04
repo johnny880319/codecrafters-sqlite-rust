@@ -34,24 +34,24 @@ fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
 
     let header_offset = offset;
     let (header_length, offset) = utils::handle_varint(raw_bytes, offset);
-    let (type_length, offset) = utils::handle_varint(raw_bytes, offset);
-    let (name_length, offset) = utils::handle_varint(raw_bytes, offset);
-    let (tbl_name_length, offset) = utils::handle_varint(raw_bytes, offset);
+    let (type_st, offset) = utils::handle_varint(raw_bytes, offset);
+    let (name_st, offset) = utils::handle_varint(raw_bytes, offset);
+    let (tbl_name_st, offset) = utils::handle_varint(raw_bytes, offset);
     let (root_page_length, offset) = utils::handle_varint(raw_bytes, offset);
-    let (sql_length, _) = utils::handle_varint(raw_bytes, offset);
+    let (sql_st, _) = utils::handle_varint(raw_bytes, offset);
 
     // only header length and root page length don't need to convert to text length.
-    let type_length = (type_length - 13) / 2;
-    let name_length = (name_length - 13) / 2;
-    let tbl_name_length = (tbl_name_length - 13) / 2;
-    let sql_length = (sql_length - 13) / 2;
+    let type_serial_type = utils::get_serial_type(type_st);
+    let name_serial_type = utils::get_serial_type(name_st);
+    let tbl_name_serial_type = utils::get_serial_type(tbl_name_st);
+    let sql_serial_type = utils::get_serial_type(sql_st);
 
     let type_offset = header_offset + header_length;
-    let name_offset = type_offset + type_length;
-    let tbl_name_offset = name_offset + name_length;
-    let root_page_offset = tbl_name_offset + tbl_name_length;
+    let name_offset = type_offset + type_serial_type.length();
+    let tbl_name_offset = name_offset + name_serial_type.length();
+    let root_page_offset = tbl_name_offset + tbl_name_serial_type.length();
     let sql_offset = root_page_offset + root_page_length;
-    let end_offset = sql_offset + sql_length;
+    let end_offset = sql_offset + sql_serial_type.length();
 
     let tbl_type = String::from_utf8_lossy(&raw_bytes[type_offset..name_offset]).to_string();
     let tbl_name =
@@ -113,7 +113,7 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
 
     for i in 0..cell_count {
         let mut offset = utils::bytes_to_usize(page_bytes, 8 + i * 2, 2);
-        // skip payload size annd header size
+        // skip payload size and header size
         (_, offset) = utils::handle_varint(page_bytes, offset);
         let rowid;
         (rowid, offset) = utils::handle_varint(page_bytes, offset);
