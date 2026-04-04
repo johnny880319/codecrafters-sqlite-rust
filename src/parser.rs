@@ -1,4 +1,4 @@
-use crate::pager;
+use crate::{pager, utils};
 use anyhow::{Result, bail};
 use std::fs::File;
 
@@ -230,7 +230,7 @@ pub fn get_target_rowids(
     bail!("Unsupported page type: {page_type}");
 }
 
-fn parse_rowid_from_index_cell(page_bytes: &[u8], cell_offset: usize) -> (String, u64) {
+fn parse_rowid_from_index_cell(page_bytes: &[u8], cell_offset: usize) -> (String, usize) {
     let (_, cell_offset) = handle_varint(page_bytes, cell_offset);
     let header_offset = cell_offset;
     let (header_length, cell_offset) = handle_varint(page_bytes, header_offset);
@@ -244,11 +244,8 @@ fn parse_rowid_from_index_cell(page_bytes: &[u8], cell_offset: usize) -> (String
     let idx_value =
         String::from_utf8_lossy(&page_bytes[cell_offset..cell_offset + idx_length]).to_string();
     cell_offset += idx_length;
-    let mut rowid_value = 0;
-    for i in 0..rowid_length {
-        let byte = page_bytes[cell_offset + i];
-        rowid_value = (rowid_value << 8) | u64::from(byte);
-    }
+    let rowid_value = utils::bytes_to_usize(page_bytes, cell_offset, rowid_length);
+
     (idx_value, rowid_value)
 }
 
