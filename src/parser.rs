@@ -29,16 +29,16 @@ pub fn parse_schema_entries(
 
 fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
     // skip record length and rowid
-    (_, offset) = handle_varint(raw_bytes, offset);
-    (_, offset) = handle_varint(raw_bytes, offset);
+    (_, offset) = utils::handle_varint(raw_bytes, offset);
+    (_, offset) = utils::handle_varint(raw_bytes, offset);
 
     let header_offset = offset;
-    let (header_length, offset) = handle_varint(raw_bytes, offset);
-    let (type_length, offset) = handle_varint(raw_bytes, offset);
-    let (name_length, offset) = handle_varint(raw_bytes, offset);
-    let (tbl_name_length, offset) = handle_varint(raw_bytes, offset);
-    let (root_page_length, offset) = handle_varint(raw_bytes, offset);
-    let (sql_length, _) = handle_varint(raw_bytes, offset);
+    let (header_length, offset) = utils::handle_varint(raw_bytes, offset);
+    let (type_length, offset) = utils::handle_varint(raw_bytes, offset);
+    let (name_length, offset) = utils::handle_varint(raw_bytes, offset);
+    let (tbl_name_length, offset) = utils::handle_varint(raw_bytes, offset);
+    let (root_page_length, offset) = utils::handle_varint(raw_bytes, offset);
+    let (sql_length, _) = utils::handle_varint(raw_bytes, offset);
 
     // only header length and root page length don't need to convert to text length.
     let type_length = (type_length - 13) / 2;
@@ -67,19 +67,6 @@ fn parse_schema_entry(raw_bytes: &[u8], mut offset: usize) -> SchemaEntry {
         tbl_columns,
         root_page,
     }
-}
-
-fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
-    let mut value = 0;
-    loop {
-        let byte = raw_bytes[offset];
-        value = (value << 7) | (usize::from(byte) & 0x7F);
-        offset += 1;
-        if byte & 0x80 == 0 {
-            break;
-        }
-    }
-    (value, offset)
 }
 
 fn get_column_names(sql_command: &str) -> Vec<String> {
@@ -127,15 +114,15 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
     for i in 0..cell_count {
         let mut offset = utils::bytes_to_usize(page_bytes, 8 + i * 2, 2);
         // skip payload size annd header size
-        (_, offset) = handle_varint(page_bytes, offset);
+        (_, offset) = utils::handle_varint(page_bytes, offset);
         let rowid;
-        (rowid, offset) = handle_varint(page_bytes, offset);
-        (_, offset) = handle_varint(page_bytes, offset);
+        (rowid, offset) = utils::handle_varint(page_bytes, offset);
+        (_, offset) = utils::handle_varint(page_bytes, offset);
 
         let mut element_prop = Vec::new();
         for _ in 0..entry.tbl_columns.len() {
             let st;
-            (st, offset) = handle_varint(page_bytes, offset);
+            (st, offset) = utils::handle_varint(page_bytes, offset);
             element_prop.push(utils::get_serial_type(st));
         }
 
@@ -225,11 +212,11 @@ pub fn get_target_rowids(
 }
 
 fn parse_rowid_from_index_cell(page_bytes: &[u8], cell_offset: usize) -> (String, usize) {
-    let (_, cell_offset) = handle_varint(page_bytes, cell_offset);
+    let (_, cell_offset) = utils::handle_varint(page_bytes, cell_offset);
     let header_offset = cell_offset;
-    let (header_length, cell_offset) = handle_varint(page_bytes, header_offset);
-    let (idx_serial_st, cell_offset) = handle_varint(page_bytes, cell_offset);
-    let (rowid_serial_st, _) = handle_varint(page_bytes, cell_offset);
+    let (header_length, cell_offset) = utils::handle_varint(page_bytes, header_offset);
+    let (idx_serial_st, cell_offset) = utils::handle_varint(page_bytes, cell_offset);
+    let (rowid_serial_st, _) = utils::handle_varint(page_bytes, cell_offset);
     let mut cell_offset = header_offset + header_length;
 
     let idx_serial_type = utils::get_serial_type(idx_serial_st);
@@ -264,7 +251,7 @@ pub fn get_row_by_rowid(
             let cell_offset = utils::bytes_to_usize(&page_bytes, 12 + i * 2, 2);
             let child_page = utils::bytes_to_usize(&page_bytes, cell_offset, 4);
 
-            let (rowid, _) = handle_varint(&page_bytes, cell_offset + 4);
+            let (rowid, _) = utils::handle_varint(&page_bytes, cell_offset + 4);
             if rowid >= target_rowid {
                 return get_row_by_rowid(file, page_size, child_page, entry, target_rowid);
             }
@@ -284,10 +271,10 @@ fn get_row_by_rowid_leaf(
     for i in 0..cell_count {
         let mut offset = utils::bytes_to_usize(page_bytes, 8 + i * 2, 2);
         // skip payload size annd header size
-        (_, offset) = handle_varint(page_bytes, offset);
+        (_, offset) = utils::handle_varint(page_bytes, offset);
         let rowid;
-        (rowid, offset) = handle_varint(page_bytes, offset);
-        (_, offset) = handle_varint(page_bytes, offset);
+        (rowid, offset) = utils::handle_varint(page_bytes, offset);
+        (_, offset) = utils::handle_varint(page_bytes, offset);
 
         if rowid != target_rowid {
             continue;
@@ -296,7 +283,7 @@ fn get_row_by_rowid_leaf(
         let mut element_prop = Vec::new();
         for _ in 0..entry.tbl_columns.len() {
             let length;
-            (length, offset) = handle_varint(page_bytes, offset);
+            (length, offset) = utils::handle_varint(page_bytes, offset);
             element_prop.push(utils::get_serial_type(length));
         }
 

@@ -7,6 +7,19 @@ pub fn bytes_to_usize(bytes: &[u8], start: usize, length: usize) -> usize {
     result
 }
 
+pub fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
+    let mut value = 0;
+    loop {
+        let byte = raw_bytes[offset];
+        value = (value << 7) | (usize::from(byte) & 0x7F);
+        offset += 1;
+        if byte & 0x80 == 0 {
+            break;
+        }
+    }
+    (value, offset)
+}
+
 pub enum SerialType {
     Null,
     Int(usize),
