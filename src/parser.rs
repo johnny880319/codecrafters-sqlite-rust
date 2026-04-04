@@ -178,7 +178,7 @@ pub fn get_target_rowids(
     target: &str,
 ) -> Result<Vec<u32>> {
     let page_bytes = pager::get_page_bytes(file, page_size, page_num)?;
-    let mut rows = Vec::new();
+    let mut rowids = Vec::new();
     let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
 
     let page_type = page_bytes[0];
@@ -189,10 +189,10 @@ pub fn get_target_rowids(
 
             let (idx_value, rowid_value) = parse_rowid_from_index_cell(&page_bytes, cell_offset);
             if idx_value == target {
-                rows.push(u32::try_from(rowid_value)?);
+                rowids.push(u32::try_from(rowid_value)?);
             }
         }
-        return Ok(rows);
+        return Ok(rowids);
     }
     if page_type == 0x02 {
         let right_child_page =
@@ -211,21 +211,21 @@ pub fn get_target_rowids(
                 parse_rowid_from_index_cell(&page_bytes, cell_offset + 4);
 
             if idx_value.as_str() > target {
-                rows.extend(get_target_rowids(file, page_size, child_page, target)?);
-                return Ok(rows);
+                rowids.extend(get_target_rowids(file, page_size, child_page, target)?);
+                return Ok(rowids);
             }
             if idx_value.as_str() == target {
-                rows.extend(get_target_rowids(file, page_size, child_page, target)?);
-                rows.push(u32::try_from(rowid_value)?);
+                rowids.extend(get_target_rowids(file, page_size, child_page, target)?);
+                rowids.push(u32::try_from(rowid_value)?);
             }
         }
-        rows.extend(get_target_rowids(
+        rowids.extend(get_target_rowids(
             file,
             page_size,
             right_child_page,
             target,
         )?);
-        return Ok(rows);
+        return Ok(rowids);
     }
     bail!("Unsupported page type: {page_type}");
 }
