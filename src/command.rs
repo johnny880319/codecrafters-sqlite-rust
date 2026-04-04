@@ -89,7 +89,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 }
 
 fn print_result_by_index(
-    ids: Vec<u32>,
+    ids: Vec<usize>,
     schema_entries: &[SchemaEntry],
     sql_query: &SqlQuery,
     mut file: File,
@@ -114,7 +114,7 @@ fn print_result_by_index(
             page_size,
             schema_entry.as_ref().unwrap().root_page,
             schema_entry.as_ref().unwrap(),
-            id as usize,
+            id,
         )?);
     }
 
