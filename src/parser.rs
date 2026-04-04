@@ -149,11 +149,7 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
                 offset += length;
                 continue;
             }
-            let mut value = 0;
-            for i in 0..length {
-                let byte = page_bytes[offset + i];
-                value = (value << 8) | u64::from(byte);
-            }
+            let value = utils::bytes_to_usize(page_bytes, offset, length);
             row.push(value.to_string());
             offset += length;
         }
@@ -302,11 +298,7 @@ fn get_row_by_rowid_leaf(
                 offset += length;
                 continue;
             }
-            let mut value = 0;
-            for i in 0..length {
-                let byte = page_bytes[offset + i];
-                value = (value << 8) | u64::from(byte);
-            }
+            let value = utils::bytes_to_usize(page_bytes, offset, length);
             row.push(value.to_string());
             offset += length;
         }
