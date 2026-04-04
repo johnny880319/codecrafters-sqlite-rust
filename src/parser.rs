@@ -183,56 +183,7 @@ pub fn get_target_rowids(
         return get_target_rowids_leaf(&page_bytes, target);
     }
     if page_type == 0x02 {
-        let mut rows = Vec::new();
-        let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
-        let right_child_page =
-            u32::from_be_bytes([page_bytes[8], page_bytes[9], page_bytes[10], page_bytes[11]]);
-
-        for i in 0..cell_count {
-            let mut cell_offset =
-                u16::from_be_bytes([page_bytes[12 + i * 2], page_bytes[12 + i * 2 + 1]]) as usize;
-            let child_page = u32::from_be_bytes([
-                page_bytes[cell_offset],
-                page_bytes[cell_offset + 1],
-                page_bytes[cell_offset + 2],
-                page_bytes[cell_offset + 3],
-            ]);
-            (_, cell_offset) = handle_varint(&page_bytes, cell_offset + 4);
-            let header_offset = cell_offset;
-            let (header_length, cell_offset) = handle_varint(&page_bytes, header_offset);
-            let (idx_serial_type, cell_offset) = handle_varint(&page_bytes, cell_offset);
-            let (rowid_serial_type, _) = handle_varint(&page_bytes, cell_offset);
-            let mut cell_offset = header_offset + header_length;
-
-            let (idx_length, _) = get_serial_type(idx_serial_type);
-            let (rowid_length, _) = get_serial_type(rowid_serial_type);
-
-            let idx_value =
-                String::from_utf8_lossy(&page_bytes[cell_offset..cell_offset + idx_length])
-                    .to_string();
-            cell_offset += idx_length;
-            let mut rowid_value = 0;
-            for i in 0..rowid_length {
-                let byte = page_bytes[cell_offset + i];
-                rowid_value = (rowid_value << 8) | u64::from(byte);
-            }
-
-            if idx_value.as_str() > target {
-                rows.extend(get_target_rowids(file, page_size, child_page, target)?);
-                return Ok(rows);
-            }
-            if idx_value.as_str() == target {
-                rows.extend(get_target_rowids(file, page_size, child_page, target)?);
-                rows.push(u32::try_from(rowid_value)?);
-            }
-        }
-        rows.extend(get_target_rowids(
-            file,
-            page_size,
-            right_child_page,
-            target,
-        )?);
-        return Ok(rows);
+        return get_target_rowids_interior(&page_bytes, target, file, page_size);
     }
     bail!("Unsupported page type: {page_type}");
 }
@@ -268,6 +219,63 @@ fn get_target_rowids_leaf(page_bytes: &[u8], target: &str) -> Result<Vec<u32>> {
             rows.push(u32::try_from(rowid_value)?);
         }
     }
+    Ok(rows)
+}
+
+fn get_target_rowids_interior(
+    page_bytes: &[u8],
+    target: &str,
+    file: &mut File,
+    page_size: u16,
+) -> Result<Vec<u32>> {
+    let mut rows = Vec::new();
+    let cell_count = u16::from_be_bytes([page_bytes[3], page_bytes[4]]) as usize;
+    let right_child_page =
+        u32::from_be_bytes([page_bytes[8], page_bytes[9], page_bytes[10], page_bytes[11]]);
+
+    for i in 0..cell_count {
+        let mut cell_offset =
+            u16::from_be_bytes([page_bytes[12 + i * 2], page_bytes[12 + i * 2 + 1]]) as usize;
+        let child_page = u32::from_be_bytes([
+            page_bytes[cell_offset],
+            page_bytes[cell_offset + 1],
+            page_bytes[cell_offset + 2],
+            page_bytes[cell_offset + 3],
+        ]);
+        (_, cell_offset) = handle_varint(page_bytes, cell_offset + 4);
+        let header_offset = cell_offset;
+        let (header_length, cell_offset) = handle_varint(page_bytes, header_offset);
+        let (idx_serial_type, cell_offset) = handle_varint(page_bytes, cell_offset);
+        let (rowid_serial_type, _) = handle_varint(page_bytes, cell_offset);
+        let mut cell_offset = header_offset + header_length;
+
+        let (idx_length, _) = get_serial_type(idx_serial_type);
+        let (rowid_length, _) = get_serial_type(rowid_serial_type);
+
+        let idx_value =
+            String::from_utf8_lossy(&page_bytes[cell_offset..cell_offset + idx_length]).to_string();
+        cell_offset += idx_length;
+        let mut rowid_value = 0;
+        for i in 0..rowid_length {
+            let byte = page_bytes[cell_offset + i];
+            rowid_value = (rowid_value << 8) | u64::from(byte);
+        }
+
+        if idx_value.as_str() > target {
+            rows.extend(get_target_rowids(file, page_size, child_page, target)?);
+            return Ok(rows);
+        }
+        if idx_value.as_str() == target {
+            rows.extend(get_target_rowids(file, page_size, child_page, target)?);
+            rows.push(u32::try_from(rowid_value)?);
+        }
+    }
+    rows.extend(get_target_rowids(
+        file,
+        page_size,
+        right_child_page,
+        target,
+    )?);
     Ok(rows)
 }
 
