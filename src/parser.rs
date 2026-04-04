@@ -1,4 +1,7 @@
-use crate::{pager, utils};
+use crate::{
+    pager,
+    utils::{self, SerialType},
+};
 use anyhow::{Result, bail};
 use std::fs::File;
 
@@ -131,27 +134,38 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
 
         let mut element_prop = Vec::new();
         for _ in 0..entry.tbl_columns.len() {
-            let length;
-            (length, offset) = handle_varint(page_bytes, offset);
-            element_prop.push(get_serial_type(length));
+            let st;
+            (st, offset) = handle_varint(page_bytes, offset);
+            element_prop.push(utils::get_serial_type(st));
         }
 
         let mut row = Vec::new();
-        for (length, data_type) in element_prop {
-            if length == 0 {
-                row.push(rowid.to_string());
-                continue;
+        for serial_type in element_prop {
+            match serial_type {
+                SerialType::Null => {
+                    row.push(rowid.to_string());
+                }
+                SerialType::Int(length) => {
+                    let value = utils::bytes_to_usize(page_bytes, offset, length);
+                    row.push(value.to_string());
+                }
+                SerialType::Float => {
+                    let value = utils::bytes_to_usize(page_bytes, offset, 8);
+                    row.push(value.to_string());
+                }
+                SerialType::Zero => {
+                    row.push("0".to_string());
+                }
+                SerialType::One => {
+                    row.push("1".to_string());
+                }
+                SerialType::Text(length) | SerialType::Blob(length) => {
+                    let value =
+                        String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
+                    row.push(value);
+                }
             }
-            if data_type == "TEXT" {
-                let value =
-                    String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
-                row.push(value);
-                offset += length;
-                continue;
-            }
-            let value = utils::bytes_to_usize(page_bytes, offset, length);
-            row.push(value.to_string());
-            offset += length;
+            offset += serial_type.length();
         }
         rows.push(row);
     }
@@ -214,17 +228,18 @@ fn parse_rowid_from_index_cell(page_bytes: &[u8], cell_offset: usize) -> (String
     let (_, cell_offset) = handle_varint(page_bytes, cell_offset);
     let header_offset = cell_offset;
     let (header_length, cell_offset) = handle_varint(page_bytes, header_offset);
-    let (idx_serial_type, cell_offset) = handle_varint(page_bytes, cell_offset);
-    let (rowid_serial_type, _) = handle_varint(page_bytes, cell_offset);
+    let (idx_serial_st, cell_offset) = handle_varint(page_bytes, cell_offset);
+    let (rowid_serial_st, _) = handle_varint(page_bytes, cell_offset);
     let mut cell_offset = header_offset + header_length;
 
-    let (idx_length, _) = get_serial_type(idx_serial_type);
-    let (rowid_length, _) = get_serial_type(rowid_serial_type);
+    let idx_serial_type = utils::get_serial_type(idx_serial_st);
+    let rowid_serial_type = utils::get_serial_type(rowid_serial_st);
 
     let idx_value =
-        String::from_utf8_lossy(&page_bytes[cell_offset..cell_offset + idx_length]).to_string();
-    cell_offset += idx_length;
-    let rowid_value = utils::bytes_to_usize(page_bytes, cell_offset, rowid_length);
+        String::from_utf8_lossy(&page_bytes[cell_offset..cell_offset + idx_serial_type.length()])
+            .to_string();
+    cell_offset += idx_serial_type.length();
+    let rowid_value = utils::bytes_to_usize(page_bytes, cell_offset, rowid_serial_type.length());
 
     (idx_value, rowid_value)
 }
@@ -282,42 +297,38 @@ fn get_row_by_rowid_leaf(
         for _ in 0..entry.tbl_columns.len() {
             let length;
             (length, offset) = handle_varint(page_bytes, offset);
-            element_prop.push(get_serial_type(length));
+            element_prop.push(utils::get_serial_type(length));
         }
 
         let mut row = Vec::new();
-        for (length, data_type) in element_prop {
-            if length == 0 {
-                row.push(rowid.to_string());
-                continue;
+        for serial_type in element_prop {
+            match serial_type {
+                SerialType::Null => {
+                    row.push(rowid.to_string());
+                }
+                SerialType::Int(length) => {
+                    let value = utils::bytes_to_usize(page_bytes, offset, length);
+                    row.push(value.to_string());
+                }
+                SerialType::Float => {
+                    let value = utils::bytes_to_usize(page_bytes, offset, 8);
+                    row.push(value.to_string());
+                }
+                SerialType::Zero => {
+                    row.push("0".to_string());
+                }
+                SerialType::One => {
+                    row.push("1".to_string());
+                }
+                SerialType::Text(length) | SerialType::Blob(length) => {
+                    let value =
+                        String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
+                    row.push(value);
+                }
             }
-            if data_type == "TEXT" {
-                let value =
-                    String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
-                row.push(value);
-                offset += length;
-                continue;
-            }
-            let value = utils::bytes_to_usize(page_bytes, offset, length);
-            row.push(value.to_string());
-            offset += length;
+            offset += serial_type.length();
         }
         return Ok(row);
     }
     bail!("Rowid {target_rowid} not found in leaf page");
-}
-
-fn get_serial_type(length: usize) -> (usize, String) {
-    match length {
-        0 => (0, "NULL".to_string()),
-        l if (1..=4).contains(&l) => (l, "INT".to_string()),
-        5 => (6, "INT".to_string()),
-        6 => (8, "INT".to_string()),
-        7 => (8, "FLOAT".to_string()),
-        8 => (0, "ZERO".to_string()),
-        9 => (0, "ONE".to_string()),
-        l if l >= 13 && l % 2 == 1 => ((l - 13) / 2, "TEXT".to_string()),
-        l if l >= 12 && l % 2 == 0 => ((l - 12) / 2, "BLOB".to_string()),
-        _ => panic!("Invalid serial type length: {length}"),
-    }
 }
