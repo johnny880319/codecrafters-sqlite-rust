@@ -1,16 +1,3 @@
-use crate::pager;
-use crate::schema::SchemaEntry;
-use anyhow::Result;
-use std::fs::File;
-
-// db header
-pub fn read_db_header(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
-    let page_size = pager::get_page_size(file)?;
-    let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
-    let cell_count = bytes_to_usize(&page_bytes, 103, 2);
-    Ok((page_size, cell_count, page_bytes))
-}
-
 // varint
 pub fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
     let mut value = 0;
@@ -69,52 +56,4 @@ pub fn bytes_to_usize(bytes: &[u8], start: usize, length: usize) -> usize {
         result |= bytes[start + i] as usize;
     }
     result
-}
-
-// row retrieval
-pub fn retrieve_row_elements(
-    entry: &SchemaEntry,
-    page_bytes: &[u8],
-    header_offset: usize,
-    rowid: usize,
-) -> Vec<String> {
-    let (header_size, mut offset) = handle_varint(page_bytes, header_offset);
-
-    let mut element_prop = Vec::new();
-    for _ in 0..entry.tbl_columns.len() {
-        let length;
-        (length, offset) = handle_varint(page_bytes, offset);
-        element_prop.push(get_serial_type(length));
-    }
-
-    offset = header_offset + header_size;
-    let mut row = Vec::new();
-    for serial_type in element_prop {
-        match serial_type {
-            SerialType::Null => {
-                row.push(rowid.to_string());
-            }
-            SerialType::Int(length) => {
-                let value = bytes_to_usize(page_bytes, offset, length);
-                row.push(value.to_string());
-            }
-            SerialType::Float => {
-                let value = bytes_to_usize(page_bytes, offset, 8);
-                row.push(value.to_string());
-            }
-            SerialType::Zero => {
-                row.push("0".to_string());
-            }
-            SerialType::One => {
-                row.push("1".to_string());
-            }
-            SerialType::Text(length) | SerialType::Blob(length) => {
-                let value =
-                    String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
-                row.push(value);
-            }
-        }
-        offset += serial_type.length();
-    }
-    row
 }

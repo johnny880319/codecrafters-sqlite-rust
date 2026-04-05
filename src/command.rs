@@ -1,5 +1,5 @@
 use crate::{
-    index,
+    index, pager,
     schema::{self},
     sql::{self},
     utils,
@@ -24,7 +24,7 @@ pub fn execute(args: &[String]) -> Result<()> {
 
 fn cmd_dbinfo(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let (page_size, cell_count, _) = utils::read_db_header(&mut file)?;
+    let (page_size, cell_count, _) = read_db_header(&mut file)?;
 
     println!("database page size: {page_size}");
     println!("number of tables: {cell_count}");
@@ -34,7 +34,7 @@ fn cmd_dbinfo(args: &[String]) -> Result<()> {
 
 fn cmd_tables(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let (_, cell_count, page_bytes) = utils::read_db_header(&mut file)?;
+    let (_, cell_count, page_bytes) = read_db_header(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
@@ -63,7 +63,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     let sql_query = sql::parse_sql_query(&args[2])?;
 
     let mut file = File::open(&args[1])?;
-    let (page_size, cell_count, page_bytes) = utils::read_db_header(&mut file)?;
+    let (page_size, cell_count, page_bytes) = read_db_header(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
@@ -87,4 +87,11 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     }
 
     sql::query_by_table(schema_entries, &sql_query, file, page_size)
+}
+
+pub fn read_db_header(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
+    let page_size = pager::get_page_size(file)?;
+    let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
+    let cell_count = utils::bytes_to_usize(&page_bytes, 103, 2);
+    Ok((page_size, cell_count, page_bytes))
 }
