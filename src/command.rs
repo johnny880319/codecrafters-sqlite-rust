@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{Result, bail};
 use std::fs::File;
 
-pub fn match_command(args: &[String]) -> Result<()> {
+pub fn execute(args: &[String]) -> Result<()> {
     match args.len() {
         0 | 1 => bail!("Missing <database path> and <command>"),
         2 => bail!("Missing <command>"),
@@ -23,7 +23,7 @@ pub fn match_command(args: &[String]) -> Result<()> {
 
 fn cmd_dbinfo(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let (page_size, cell_count, _) = get_db_info(&mut file)?;
+    let (page_size, cell_count, _) = read_db_header(&mut file)?;
 
     println!("database page size: {page_size}");
     println!("number of tables: {cell_count}");
@@ -33,7 +33,7 @@ fn cmd_dbinfo(args: &[String]) -> Result<()> {
 
 fn cmd_tables(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let (_, cell_count, page_bytes) = get_db_info(&mut file)?;
+    let (_, cell_count, page_bytes) = read_db_header(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
@@ -62,33 +62,33 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     let sql_query = parse_sql_query(&args[2])?;
 
     let mut file = File::open(&args[1])?;
-    let (page_size, cell_count, page_bytes) = get_db_info(&mut file)?;
+    let (page_size, cell_count, page_bytes) = read_db_header(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
     let schema_entries = schema::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
 
-    if let Some((where_col, _)) = &sql_query.where_clause {
+    if let Some(where_clause) = &sql_query.where_clause {
         for entry in &schema_entries {
             if entry.tbl_name == sql_query.table
                 && entry.tbl_type.to_uppercase() == "INDEX"
-                && entry.tbl_columns[0] == *where_col
+                && entry.tbl_columns[0] == where_clause.column
             {
                 let rowids = index::get_target_rowids(
                     &mut file,
                     page_size,
                     entry.root_page,
-                    &sql_query.where_clause.as_ref().unwrap().1,
+                    &where_clause.value,
                 )?;
-                return print_result_by_index(rowids, &schema_entries, &sql_query, file, page_size);
+                return query_by_index(rowids, &schema_entries, &sql_query, file, page_size);
             }
         }
     }
 
-    print_result_by_table(schema_entries, sql_query, file, page_size)
+    query_by_table(schema_entries, &sql_query, file, page_size)
 }
 
-fn print_result_by_index(
+fn query_by_index(
     rowids: Vec<usize>,
     schema_entries: &[SchemaEntry],
     sql_query: &SqlQuery,
@@ -113,18 +113,12 @@ fn print_result_by_index(
     print_rows(rows, &sql_query.columns, schema_entry)
 }
 
-fn print_result_by_table(
+fn query_by_table(
     schema_entries: Vec<SchemaEntry>,
-    sql_query: SqlQuery,
+    sql_query: &SqlQuery,
     mut file: File,
     page_size: usize,
 ) -> Result<()> {
-    let (where_clause_col, where_clause_val) = if let Some((col, val)) = sql_query.where_clause {
-        (Some(col), Some(val))
-    } else {
-        (None, None)
-    };
-
     for entry in schema_entries {
         if entry.tbl_name != sql_query.table || entry.tbl_type.to_uppercase() != "TABLE" {
             continue;
@@ -132,13 +126,14 @@ fn print_result_by_table(
 
         let mut rows = table::get_all_rows(&mut file, page_size, entry.root_page, &entry)?;
 
-        let where_clause_idx = if let Some(where_col) = where_clause_col {
-            entry.tbl_columns.iter().position(|col| col == &where_col)
-        } else {
-            None
-        };
-        if let Some(where_idx) = where_clause_idx {
-            rows.retain(|row| row[where_idx] == *where_clause_val.as_ref().unwrap());
+        if let Some(where_clause) = &sql_query.where_clause {
+            let where_clause_idx = entry
+                .tbl_columns
+                .iter()
+                .position(|col| col == &where_clause.column);
+            if let Some(where_clause_idx) = where_clause_idx {
+                rows.retain(|row| row[where_clause_idx] == *where_clause.value);
+            }
         }
 
         return print_rows(rows, &sql_query.columns, &entry);
@@ -172,7 +167,7 @@ fn print_rows(rows: Vec<Vec<String>>, column_names: &[String], entry: &SchemaEnt
     Ok(())
 }
 
-fn get_db_info(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
+fn read_db_header(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
     let page_size = pager::get_page_size(file)?;
     let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
     let cell_count = utils::bytes_to_usize(&page_bytes, 103, 2);
@@ -182,7 +177,12 @@ fn get_db_info(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
 struct SqlQuery {
     columns: Vec<String>,
     table: String,
-    where_clause: Option<(String, String)>,
+    where_clause: Option<WhereClause>,
+}
+
+struct WhereClause {
+    column: String,
+    value: String,
 }
 
 fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
@@ -219,10 +219,10 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
         let (col, val) = where_part.split_once('=').ok_or_else(|| {
             anyhow::anyhow!("Only support simple WHERE clause with format: column_name=value")
         })?;
-        Some((
-            col.trim().to_string(),
-            val.trim().to_string().trim_matches('\'').to_string(),
-        ))
+        Some(WhereClause {
+            column: col.trim().to_string(),
+            value: val.trim().to_string().trim_matches('\'').to_string(),
+        })
     } else {
         None
     };

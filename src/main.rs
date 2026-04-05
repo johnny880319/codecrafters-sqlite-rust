@@ -8,6 +8,6 @@ mod utils;
 
 fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
-    command::match_command(&args)?;
+    command::execute(&args)?;
     Ok(())
 }
