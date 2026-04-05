@@ -117,7 +117,6 @@ pub fn get_leaf_rows(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
         (_, offset) = utils::handle_varint(page_bytes, offset);
         let rowid;
         (rowid, offset) = utils::handle_varint(page_bytes, offset);
-        (_, offset) = utils::handle_varint(page_bytes, offset);
 
         rows.push(retrieve_row_elements(entry, page_bytes, offset, rowid));
     }
@@ -239,7 +238,6 @@ fn get_row_by_rowid_leaf(
         (_, offset) = utils::handle_varint(page_bytes, offset);
         let rowid;
         (rowid, offset) = utils::handle_varint(page_bytes, offset);
-        (_, offset) = utils::handle_varint(page_bytes, offset);
 
         if rowid == target_rowid {
             return Ok(retrieve_row_elements(entry, page_bytes, offset, rowid));
@@ -251,9 +249,11 @@ fn get_row_by_rowid_leaf(
 fn retrieve_row_elements(
     entry: &SchemaEntry,
     page_bytes: &[u8],
-    mut offset: usize,
+    header_offset: usize,
     rowid: usize,
 ) -> Vec<String> {
+    let (header_size, mut offset) = utils::handle_varint(page_bytes, header_offset);
+
     let mut element_prop = Vec::new();
     for _ in 0..entry.tbl_columns.len() {
         let length;
@@ -261,6 +261,7 @@ fn retrieve_row_elements(
         element_prop.push(utils::get_serial_type(length));
     }
 
+    offset = header_offset + header_size;
     let mut row = Vec::new();
     for serial_type in element_prop {
         match serial_type {
