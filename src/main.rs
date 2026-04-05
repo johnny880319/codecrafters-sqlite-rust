@@ -3,6 +3,7 @@ mod command;
 mod index;
 mod pager;
 mod schema;
+mod sql;
 mod table;
 mod utils;
 

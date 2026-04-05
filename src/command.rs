@@ -1,7 +1,8 @@
 use crate::{
-    index, pager,
-    schema::{self, SchemaEntry},
-    table, utils,
+    index,
+    schema::{self},
+    sql::{self},
+    utils,
 };
 use anyhow::{Result, bail};
 use std::fs::File;
@@ -23,7 +24,7 @@ pub fn execute(args: &[String]) -> Result<()> {
 
 fn cmd_dbinfo(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let (page_size, cell_count, _) = read_db_header(&mut file)?;
+    let (page_size, cell_count, _) = utils::read_db_header(&mut file)?;
 
     println!("database page size: {page_size}");
     println!("number of tables: {cell_count}");
@@ -33,7 +34,7 @@ fn cmd_dbinfo(args: &[String]) -> Result<()> {
 
 fn cmd_tables(args: &[String]) -> Result<()> {
     let mut file = File::open(&args[1])?;
-    let (_, cell_count, page_bytes) = read_db_header(&mut file)?;
+    let (_, cell_count, page_bytes) = utils::read_db_header(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
@@ -59,10 +60,10 @@ fn cmd_tables(args: &[String]) -> Result<()> {
 // "SELECT COUNT(*) FROM table_name"
 // "SELECT column_name_1, column_name_2, ... FROM table_name (WHERE column_name=value)"
 fn cmd_sql_query(args: &[String]) -> Result<()> {
-    let sql_query = parse_sql_query(&args[2])?;
+    let sql_query = sql::parse_sql_query(&args[2])?;
 
     let mut file = File::open(&args[1])?;
-    let (page_size, cell_count, page_bytes) = read_db_header(&mut file)?;
+    let (page_size, cell_count, page_bytes) = utils::read_db_header(&mut file)?;
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
@@ -81,157 +82,9 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
                 index_entry.root_page,
                 &where_clause.value,
             )?;
-            return query_by_index(rowids, &schema_entries, &sql_query, file, page_size);
+            return sql::query_by_index(rowids, &schema_entries, &sql_query, file, page_size);
         }
     }
 
-    query_by_table(schema_entries, &sql_query, file, page_size)
-}
-
-fn query_by_index(
-    rowids: Vec<usize>,
-    schema_entries: &[SchemaEntry],
-    sql_query: &SqlQuery,
-    mut file: File,
-    page_size: usize,
-) -> Result<()> {
-    let schema_entry = schema_entries
-        .iter()
-        .find(|entry| {
-            entry.tbl_name == sql_query.table && entry.tbl_type.eq_ignore_ascii_case("TABLE")
-        })
-        .unwrap();
-    let mut rows = Vec::new();
-    for rowid in rowids {
-        rows.push(table::get_target_row(
-            &mut file,
-            page_size,
-            schema_entry.root_page,
-            schema_entry,
-            rowid,
-        )?);
-    }
-
-    print_rows(rows, &sql_query.columns, schema_entry)
-}
-
-fn query_by_table(
-    schema_entries: Vec<SchemaEntry>,
-    sql_query: &SqlQuery,
-    mut file: File,
-    page_size: usize,
-) -> Result<()> {
-    for entry in schema_entries {
-        if entry.tbl_name != sql_query.table || !entry.tbl_type.eq_ignore_ascii_case("TABLE") {
-            continue;
-        }
-
-        let mut rows = table::get_all_rows(&mut file, page_size, entry.root_page, &entry)?;
-
-        if let Some(where_clause) = &sql_query.where_clause {
-            let where_clause_idx = entry
-                .tbl_columns
-                .iter()
-                .position(|col| col == &where_clause.column);
-            if let Some(where_clause_idx) = where_clause_idx {
-                rows.retain(|row| row[where_clause_idx] == *where_clause.value);
-            }
-        }
-
-        return print_rows(rows, &sql_query.columns, &entry);
-    }
-    bail!("Table {} not found", sql_query.table);
-}
-
-fn print_rows(rows: Vec<Vec<String>>, column_names: &[String], entry: &SchemaEntry) -> Result<()> {
-    if column_names.len() == 1 && column_names[0].eq_ignore_ascii_case("COUNT(*)") {
-        println!("{}", rows.len());
-        return Ok(());
-    }
-    let col_idx_list = column_names
-        .iter()
-        .map(|col_name| entry.tbl_columns.iter().position(|col| col == col_name))
-        .collect::<Vec<_>>();
-
-    for row in rows {
-        for (i, col_idx) in col_idx_list.iter().enumerate() {
-            if let Some(col_idx) = col_idx {
-                print!("{}", row[*col_idx]);
-            } else {
-                bail!("Column index not found");
-            }
-            if i != col_idx_list.len() - 1 {
-                print!("|");
-            }
-        }
-        println!();
-    }
-    Ok(())
-}
-
-fn read_db_header(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
-    let page_size = pager::get_page_size(file)?;
-    let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
-    let cell_count = utils::bytes_to_usize(&page_bytes, 103, 2);
-    Ok((page_size, cell_count, page_bytes))
-}
-
-struct SqlQuery {
-    columns: Vec<String>,
-    table: String,
-    where_clause: Option<WhereClause>,
-}
-
-struct WhereClause {
-    column: String,
-    value: String,
-}
-
-fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
-    sql = sql.trim();
-    sql = sql.strip_suffix(';').unwrap_or(sql);
-    sql = sql.trim();
-
-    let where_part;
-    let where_idx = sql.to_uppercase().find("WHERE");
-    (sql, where_part) = where_idx.map_or((sql, None), |idx| (&sql[..idx], Some(&sql[idx + 5..])));
-
-    let split_sql = sql.split_whitespace().collect::<Vec<&str>>();
-
-    let mut idx = 0;
-    if !split_sql[idx].eq_ignore_ascii_case("SELECT") {
-        bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
-    }
-    idx += 1;
-    let mut columns = Vec::new();
-    while !split_sql[idx].eq_ignore_ascii_case("FROM") {
-        columns.push(
-            split_sql[idx]
-                .strip_suffix(',')
-                .unwrap_or(split_sql[idx])
-                .to_string(),
-        );
-        idx += 1;
-    }
-    idx += 1;
-
-    let table = split_sql[idx].to_string();
-
-    let where_clause = if let Some(where_part) = where_part {
-        let (col, val) = where_part.split_once('=').ok_or_else(|| {
-            anyhow::anyhow!("Only support simple WHERE clause with format: column_name=value")
-        })?;
-        Some(WhereClause {
-            column: col.trim().to_string(),
-            value: val.trim().to_string().trim_matches('\'').to_string(),
-        })
-    } else {
-        None
-    };
-
-    Ok(SqlQuery {
-        columns,
-        table,
-        where_clause,
-    })
+    sql::query_by_table(schema_entries, &sql_query, file, page_size)
 }
