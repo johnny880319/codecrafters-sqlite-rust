@@ -1,14 +1,6 @@
 use crate::schema::SchemaEntry;
 
-pub fn bytes_to_usize(bytes: &[u8], start: usize, length: usize) -> usize {
-    let mut result = 0;
-    for i in 0..length {
-        result <<= 8;
-        result |= bytes[start + i] as usize;
-    }
-    result
-}
-
+// varint
 pub fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
     let mut value = 0;
     loop {
@@ -22,6 +14,7 @@ pub fn handle_varint(raw_bytes: &[u8], mut offset: usize) -> (usize, usize) {
     (value, offset)
 }
 
+// serial type
 pub enum SerialType {
     Null,
     Int(usize),
@@ -57,6 +50,17 @@ pub fn get_serial_type(serial_type: usize) -> SerialType {
     }
 }
 
+// integer
+pub fn bytes_to_usize(bytes: &[u8], start: usize, length: usize) -> usize {
+    let mut result = 0;
+    for i in 0..length {
+        result <<= 8;
+        result |= bytes[start + i] as usize;
+    }
+    result
+}
+
+// row retrieval
 pub fn retrieve_row_elements(
     entry: &SchemaEntry,
     page_bytes: &[u8],

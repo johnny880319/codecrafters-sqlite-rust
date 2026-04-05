@@ -6,52 +6,77 @@ pub fn get_target_rowids(
     file: &mut File,
     page_size: usize,
     page_num: usize,
-    target: &str,
+    target_value: &str,
 ) -> Result<Vec<usize>> {
     let page_bytes = pager::get_page_bytes(file, page_size, page_num)?;
-    let mut rowids = Vec::new();
-    let cell_count = utils::bytes_to_usize(&page_bytes, 3, 2);
 
     let page_type = page_bytes[0];
     if page_type == 0x0a {
-        for i in 0..cell_count {
-            let cell_offset = utils::bytes_to_usize(&page_bytes, 8 + i * 2, 2);
-
-            let (idx_value, rowid_value) = parse_rowid_from_index_cell(&page_bytes, cell_offset);
-            if idx_value == target {
-                rowids.push(rowid_value);
-            }
-        }
-        return Ok(rowids);
+        return Ok(get_target_rowids_leaf(&page_bytes, target_value));
     }
     if page_type == 0x02 {
-        let right_child_page = utils::bytes_to_usize(&page_bytes, 8, 4);
-
-        for i in 0..cell_count {
-            let cell_offset = utils::bytes_to_usize(&page_bytes, 12 + i * 2, 2);
-            let child_page = utils::bytes_to_usize(&page_bytes, cell_offset, 4);
-
-            let (idx_value, rowid_value) =
-                parse_rowid_from_index_cell(&page_bytes, cell_offset + 4);
-
-            if idx_value.as_str() > target {
-                rowids.extend(get_target_rowids(file, page_size, child_page, target)?);
-                return Ok(rowids);
-            }
-            if idx_value.as_str() == target {
-                rowids.extend(get_target_rowids(file, page_size, child_page, target)?);
-                rowids.push(rowid_value);
-            }
-        }
-        rowids.extend(get_target_rowids(
-            file,
-            page_size,
-            right_child_page,
-            target,
-        )?);
-        return Ok(rowids);
+        return get_target_rowids_interior(file, &page_bytes, page_size, target_value);
     }
     bail!("Unsupported page type: {page_type}");
+}
+
+fn get_target_rowids_interior(
+    file: &mut File,
+    page_bytes: &[u8],
+    page_size: usize,
+    target_value: &str,
+) -> Result<Vec<usize>> {
+    let mut rowids = Vec::new();
+    let cell_count = utils::bytes_to_usize(page_bytes, 3, 2);
+    let right_child_page = utils::bytes_to_usize(page_bytes, 8, 4);
+
+    for i in 0..cell_count {
+        let cell_offset = utils::bytes_to_usize(page_bytes, 12 + i * 2, 2);
+        let child_page = utils::bytes_to_usize(page_bytes, cell_offset, 4);
+
+        let (idx_value, rowid_value) = parse_rowid_from_index_cell(page_bytes, cell_offset + 4);
+
+        if idx_value.as_str() > target_value {
+            rowids.extend(get_target_rowids(
+                file,
+                page_size,
+                child_page,
+                target_value,
+            )?);
+            return Ok(rowids);
+        }
+        if idx_value.as_str() == target_value {
+            rowids.extend(get_target_rowids(
+                file,
+                page_size,
+                child_page,
+                target_value,
+            )?);
+            rowids.push(rowid_value);
+        }
+    }
+    rowids.extend(get_target_rowids(
+        file,
+        page_size,
+        right_child_page,
+        target_value,
+    )?);
+    Ok(rowids)
+}
+
+fn get_target_rowids_leaf(page_bytes: &[u8], target_value: &str) -> Vec<usize> {
+    let mut rowids = Vec::new();
+    let cell_count = utils::bytes_to_usize(page_bytes, 3, 2);
+
+    for i in 0..cell_count {
+        let cell_offset = utils::bytes_to_usize(page_bytes, 8 + i * 2, 2);
+
+        let (idx_value, rowid_value) = parse_rowid_from_index_cell(page_bytes, cell_offset);
+        if idx_value == target_value {
+            rowids.push(rowid_value);
+        }
+    }
+    rowids
 }
 
 fn parse_rowid_from_index_cell(page_bytes: &[u8], cell_offset: usize) -> (String, usize) {
