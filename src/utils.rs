@@ -1,3 +1,5 @@
+use crate::schema::SchemaEntry;
+
 pub fn bytes_to_usize(bytes: &[u8], start: usize, length: usize) -> usize {
     let mut result = 0;
     for i in 0..length {
@@ -53,4 +55,51 @@ pub fn get_serial_type(serial_type: usize) -> SerialType {
         st if st >= 12 && st % 2 == 0 => SerialType::Blob((st - 12) / 2),
         _ => panic!("Invalid serial type: {serial_type}"),
     }
+}
+
+pub fn retrieve_row_elements(
+    entry: &SchemaEntry,
+    page_bytes: &[u8],
+    header_offset: usize,
+    rowid: usize,
+) -> Vec<String> {
+    let (header_size, mut offset) = handle_varint(page_bytes, header_offset);
+
+    let mut element_prop = Vec::new();
+    for _ in 0..entry.tbl_columns.len() {
+        let length;
+        (length, offset) = handle_varint(page_bytes, offset);
+        element_prop.push(get_serial_type(length));
+    }
+
+    offset = header_offset + header_size;
+    let mut row = Vec::new();
+    for serial_type in element_prop {
+        match serial_type {
+            SerialType::Null => {
+                row.push(rowid.to_string());
+            }
+            SerialType::Int(length) => {
+                let value = bytes_to_usize(page_bytes, offset, length);
+                row.push(value.to_string());
+            }
+            SerialType::Float => {
+                let value = bytes_to_usize(page_bytes, offset, 8);
+                row.push(value.to_string());
+            }
+            SerialType::Zero => {
+                row.push("0".to_string());
+            }
+            SerialType::One => {
+                row.push("1".to_string());
+            }
+            SerialType::Text(length) | SerialType::Blob(length) => {
+                let value =
+                    String::from_utf8_lossy(&page_bytes[offset..offset + length]).to_string();
+                row.push(value);
+            }
+        }
+        offset += serial_type.length();
+    }
+    row
 }

@@ -1,7 +1,7 @@
 use crate::{
-    pager,
-    parser::{self, SchemaEntry},
-    utils,
+    index, pager,
+    schema::{self, SchemaEntry},
+    table, utils,
 };
 use anyhow::{Result, bail};
 use std::fs::File;
@@ -37,7 +37,7 @@ fn cmd_tables(args: &[String]) -> Result<()> {
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
-    let schema_entries = parser::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
+    let schema_entries = schema::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
 
     let mut table_name_list = schema_entries
         .into_iter()
@@ -66,7 +66,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 
     let cell_array_offset = if page_bytes[100] == 0x0d { 108 } else { 112 };
 
-    let schema_entries = parser::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
+    let schema_entries = schema::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
 
     if let Some((where_col, _)) = &sql_query.where_clause {
         for entry in &schema_entries {
@@ -74,7 +74,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
                 && entry.tbl_type.to_uppercase() == "INDEX"
                 && entry.tbl_columns[0] == *where_col
             {
-                let ids = parser::get_target_rowids(
+                let ids = index::get_target_rowids(
                     &mut file,
                     page_size,
                     entry.root_page,
@@ -101,7 +101,7 @@ fn print_result_by_index(
         .unwrap();
     let mut rows = Vec::new();
     for id in ids {
-        rows.push(parser::get_row_by_rowid(
+        rows.push(table::get_row_by_rowid(
             &mut file,
             page_size,
             schema_entry.root_page,
@@ -130,7 +130,7 @@ fn print_result_by_table(
             continue;
         }
 
-        let mut rows = parser::get_all_rows(&mut file, page_size, entry.root_page, &entry)?;
+        let mut rows = table::get_all_rows(&mut file, page_size, entry.root_page, &entry)?;
 
         let where_clause_idx = if let Some(where_col) = where_clause_col {
             entry.tbl_columns.iter().position(|col| col == &where_col)

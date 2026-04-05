@@ -1,7 +1,9 @@
 use anyhow::Result;
 mod command;
+mod index;
 mod pager;
-mod parser;
+mod schema;
+mod table;
 mod utils;
 
 fn main() -> Result<()> {
