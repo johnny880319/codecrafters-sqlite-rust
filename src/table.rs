@@ -106,7 +106,7 @@ fn get_target_row_leaf(
 
     for i in 0..cell_count {
         let mut offset = utils::bytes_to_usize(page_bytes, 8 + i * 2, 2);
-        // skip payload size and header size
+        // skip payload size
         (_, offset) = utils::handle_varint(page_bytes, offset);
         let rowid;
         (rowid, offset) = utils::handle_varint(page_bytes, offset);
