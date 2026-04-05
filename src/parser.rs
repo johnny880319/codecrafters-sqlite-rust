@@ -234,7 +234,7 @@ fn get_row_by_rowid_leaf(
 
     for i in 0..cell_count {
         let mut offset = utils::bytes_to_usize(page_bytes, 8 + i * 2, 2);
-        // skip payload size annd header size
+        // skip payload size and header size
         (_, offset) = utils::handle_varint(page_bytes, offset);
         let rowid;
         (rowid, offset) = utils::handle_varint(page_bytes, offset);

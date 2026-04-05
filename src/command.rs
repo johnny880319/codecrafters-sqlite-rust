@@ -95,25 +95,22 @@ fn print_result_by_index(
     mut file: File,
     page_size: usize,
 ) -> Result<()> {
-    let schema_entry = schema_entries.iter().find(|entry| {
-        entry.tbl_name == sql_query.table
-            && entry.tbl_type.to_uppercase() == "TABLE"
-            && entry
-                .tbl_columns
-                .contains(&sql_query.where_clause.as_ref().unwrap().0)
-    });
+    let schema_entry = schema_entries
+        .iter()
+        .find(|entry| entry.tbl_name == sql_query.table && entry.tbl_type.to_uppercase() == "TABLE")
+        .unwrap();
     let mut rows = Vec::new();
     for id in ids {
         rows.push(parser::get_row_by_rowid(
             &mut file,
             page_size,
-            schema_entry.as_ref().unwrap().root_page,
-            schema_entry.as_ref().unwrap(),
+            schema_entry.root_page,
+            schema_entry,
             id,
         )?);
     }
 
-    print_rows(rows, &sql_query.columns, schema_entry.as_ref().unwrap())
+    print_rows(rows, &sql_query.columns, schema_entry)
 }
 
 fn print_result_by_table(
@@ -197,26 +194,26 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     let where_idx = sql.to_uppercase().find("WHERE");
     (sql, where_part) = where_idx.map_or((sql, None), |idx| (&sql[..idx], Some(&sql[idx + 5..])));
 
-    let splited_sql = sql.split_whitespace().collect::<Vec<&str>>();
+    let split_sql = sql.split_whitespace().collect::<Vec<&str>>();
 
     let mut idx = 0;
-    if splited_sql[idx].to_uppercase() != "SELECT" {
+    if split_sql[idx].to_uppercase() != "SELECT" {
         bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
     }
     idx += 1;
     let mut columns = Vec::new();
-    while splited_sql[idx].to_uppercase() != "FROM" {
+    while split_sql[idx].to_uppercase() != "FROM" {
         columns.push(
-            splited_sql[idx]
+            split_sql[idx]
                 .strip_suffix(',')
-                .unwrap_or(splited_sql[idx])
+                .unwrap_or(split_sql[idx])
                 .to_string(),
         );
         idx += 1;
     }
     idx += 1;
 
-    let table = splited_sql[idx].to_string();
+    let table = split_sql[idx].to_string();
 
     let where_clause = if let Some(where_part) = where_part {
         let (col, val) = where_part.split_once('=').ok_or_else(|| {
