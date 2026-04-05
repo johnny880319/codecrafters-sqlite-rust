@@ -95,18 +95,13 @@ fn print_result_by_index(
     mut file: File,
     page_size: usize,
 ) -> Result<()> {
-    let mut schema_entry = None;
-    for entry in schema_entries {
-        if entry.tbl_name == sql_query.table
+    let schema_entry = schema_entries.iter().find(|entry| {
+        entry.tbl_name == sql_query.table
             && entry.tbl_type.to_uppercase() == "TABLE"
             && entry
                 .tbl_columns
                 .contains(&sql_query.where_clause.as_ref().unwrap().0)
-        {
-            schema_entry = Some(entry);
-            break;
-        }
-    }
+    });
     let mut rows = Vec::new();
     for id in ids {
         rows.push(parser::get_row_by_rowid(
