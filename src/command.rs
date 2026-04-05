@@ -74,13 +74,13 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
                 && entry.tbl_type.to_uppercase() == "INDEX"
                 && entry.tbl_columns[0] == *where_col
             {
-                let ids = index::get_target_rowids(
+                let rowids = index::get_target_rowids(
                     &mut file,
                     page_size,
                     entry.root_page,
                     &sql_query.where_clause.as_ref().unwrap().1,
                 )?;
-                return print_result_by_index(ids, &schema_entries, &sql_query, file, page_size);
+                return print_result_by_index(rowids, &schema_entries, &sql_query, file, page_size);
             }
         }
     }
@@ -89,7 +89,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
 }
 
 fn print_result_by_index(
-    ids: Vec<usize>,
+    rowids: Vec<usize>,
     schema_entries: &[SchemaEntry],
     sql_query: &SqlQuery,
     mut file: File,
@@ -100,13 +100,13 @@ fn print_result_by_index(
         .find(|entry| entry.tbl_name == sql_query.table && entry.tbl_type.to_uppercase() == "TABLE")
         .unwrap();
     let mut rows = Vec::new();
-    for id in ids {
+    for rowid in rowids {
         rows.push(table::get_target_row(
             &mut file,
             page_size,
             schema_entry.root_page,
             schema_entry,
-            id,
+            rowid,
         )?);
     }
 
