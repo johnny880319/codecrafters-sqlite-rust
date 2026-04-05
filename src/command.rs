@@ -1,9 +1,4 @@
-use crate::{
-    index, pager,
-    schema::{self},
-    sql::{self},
-    utils,
-};
+use crate::{index, pager, schema, sql, utils};
 use anyhow::{Result, bail};
 use std::fs::File;
 
@@ -89,7 +84,7 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     sql::query_by_table(schema_entries, &sql_query, file, page_size)
 }
 
-pub fn read_db_header(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
+fn read_db_header(file: &mut File) -> Result<(usize, usize, Vec<u8>)> {
     let page_size = pager::get_page_size(file)?;
     let page_bytes = pager::get_page_bytes(file, page_size, 1)?;
     let cell_count = utils::bytes_to_usize(&page_bytes, 103, 2);

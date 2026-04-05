@@ -47,7 +47,7 @@ fn get_all_rows_leaf(page_bytes: &[u8], entry: &SchemaEntry) -> Vec<Vec<String>>
 
     for i in 0..cell_count {
         let mut offset = utils::bytes_to_usize(page_bytes, 8 + i * 2, 2);
-        // skip payload size and header size
+        // skip payload size
         (_, offset) = utils::handle_varint(page_bytes, offset);
         let rowid;
         (rowid, offset) = utils::handle_varint(page_bytes, offset);
