@@ -57,7 +57,7 @@ fn cmd_tables(args: &[String]) -> Result<()> {
 
 // Assume the command are one of the below for now
 // "SELECT COUNT(*) FROM table_name"
-// "SELECT column_name FROM table_name"
+// "SELECT column_name_1, column_name_2, ... FROM table_name (WHERE column_name=value)"
 fn cmd_sql_query(args: &[String]) -> Result<()> {
     let sql_query = parse_sql_query(&args[2])?;
 
@@ -69,19 +69,19 @@ fn cmd_sql_query(args: &[String]) -> Result<()> {
     let schema_entries = schema::parse_schema_entries(&page_bytes, cell_array_offset, cell_count);
 
     if let Some(where_clause) = &sql_query.where_clause {
-        for entry in &schema_entries {
-            if entry.tbl_name == sql_query.table
-                && entry.tbl_type.to_uppercase() == "INDEX"
+        let index_entry = schema_entries.iter().find(|entry| {
+            entry.tbl_name == sql_query.table
+                && entry.tbl_type.eq_ignore_ascii_case("INDEX")
                 && entry.tbl_columns[0] == where_clause.column
-            {
-                let rowids = index::get_target_rowids(
-                    &mut file,
-                    page_size,
-                    entry.root_page,
-                    &where_clause.value,
-                )?;
-                return query_by_index(rowids, &schema_entries, &sql_query, file, page_size);
-            }
+        });
+        if let Some(index_entry) = index_entry {
+            let rowids = index::get_target_rowids(
+                &mut file,
+                page_size,
+                index_entry.root_page,
+                &where_clause.value,
+            )?;
+            return query_by_index(rowids, &schema_entries, &sql_query, file, page_size);
         }
     }
 
@@ -97,7 +97,9 @@ fn query_by_index(
 ) -> Result<()> {
     let schema_entry = schema_entries
         .iter()
-        .find(|entry| entry.tbl_name == sql_query.table && entry.tbl_type.to_uppercase() == "TABLE")
+        .find(|entry| {
+            entry.tbl_name == sql_query.table && entry.tbl_type.eq_ignore_ascii_case("TABLE")
+        })
         .unwrap();
     let mut rows = Vec::new();
     for rowid in rowids {
@@ -120,7 +122,7 @@ fn query_by_table(
     page_size: usize,
 ) -> Result<()> {
     for entry in schema_entries {
-        if entry.tbl_name != sql_query.table || entry.tbl_type.to_uppercase() != "TABLE" {
+        if entry.tbl_name != sql_query.table || !entry.tbl_type.eq_ignore_ascii_case("TABLE") {
             continue;
         }
 
@@ -142,7 +144,7 @@ fn query_by_table(
 }
 
 fn print_rows(rows: Vec<Vec<String>>, column_names: &[String], entry: &SchemaEntry) -> Result<()> {
-    if column_names.len() == 1 && column_names[0].to_uppercase() == "COUNT(*)" {
+    if column_names.len() == 1 && column_names[0].eq_ignore_ascii_case("COUNT(*)") {
         println!("{}", rows.len());
         return Ok(());
     }
@@ -197,12 +199,12 @@ fn parse_sql_query(mut sql: &str) -> Result<SqlQuery> {
     let split_sql = sql.split_whitespace().collect::<Vec<&str>>();
 
     let mut idx = 0;
-    if split_sql[idx].to_uppercase() != "SELECT" {
+    if !split_sql[idx].eq_ignore_ascii_case("SELECT") {
         bail!("Only support simple SQL query with format: SELECT column_name FROM table_name");
     }
     idx += 1;
     let mut columns = Vec::new();
-    while split_sql[idx].to_uppercase() != "FROM" {
+    while !split_sql[idx].eq_ignore_ascii_case("FROM") {
         columns.push(
             split_sql[idx]
                 .strip_suffix(',')
