@@ -101,7 +101,7 @@ fn print_result_by_index(
         .unwrap();
     let mut rows = Vec::new();
     for id in ids {
-        rows.push(table::get_row_by_rowid(
+        rows.push(table::get_target_row(
             &mut file,
             page_size,
             schema_entry.root_page,

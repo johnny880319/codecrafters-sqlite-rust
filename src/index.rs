@@ -15,14 +15,14 @@ pub fn get_target_rowids(
         return Ok(get_target_rowids_leaf(&page_bytes, target_value));
     }
     if page_type == 0x02 {
-        return get_target_rowids_interior(file, &page_bytes, page_size, target_value);
+        return get_target_rowids_interior(&page_bytes, file, page_size, target_value);
     }
     bail!("Unsupported page type: {page_type}");
 }
 
 fn get_target_rowids_interior(
-    file: &mut File,
     page_bytes: &[u8],
+    file: &mut File,
     page_size: usize,
     target_value: &str,
 ) -> Result<Vec<usize>> {
